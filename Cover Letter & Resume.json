@@ -1,0 +1,621 @@
+{
+  "name": "Cover Letter & Resume",
+  "nodes": [
+    {
+      "parameters": {
+        "command": "=mkdir -p \"{{ $('Merge Body Into LaTeX').first().json.work_dir }}\"\n\necho \"{{ $('Merge Body Into LaTeX').first().json.latex_base64 }}\" | base64 -d > \"{{ $('Merge Body Into LaTeX').first().json.tex_path }}\"\n\necho \"{{ $('Merge Body Into LaTeX').first().json.change_log_base64 }}\" | base64 -d > \"{{ $('Merge Body Into LaTeX').first().json.log_path }}\"\n\ncd \"{{ $('Merge Body Into LaTeX').first().json.work_dir }}\"\n\necho \"WORK DIR:\"\npwd\n\necho \"TEX FILE:\"\nls -lh \"{{ $('Merge Body Into LaTeX').first().json.tex_file_name }}\"\n\necho \"CHECKING BOLD:\"\ngrep -n \"textbf\" \"{{ $('Merge Body Into LaTeX').first().json.tex_file_name }}\" | head -50 || true\n\necho \"CHECKING CHANGE LOG:\"\ncat \"{{ $('Merge Body Into LaTeX').first().json.log_file_name }}\" | head -120 || true\n\necho \"REMOVING OLD PDF:\"\nrm -f \"{{ $('Merge Body Into LaTeX').first().json.pdf_file_name }}\"\n\necho \"COMPILING COVER LETTER WITH PDFLATEX:\"\npdflatex -interaction=nonstopmode -halt-on-error \"{{ $('Merge Body Into LaTeX').first().json.tex_file_name }}\"\npdflatex -interaction=nonstopmode -halt-on-error \"{{ $('Merge Body Into LaTeX').first().json.tex_file_name }}\"\n\necho \"FINAL PDF:\"\nls -lh \"{{ $('Merge Body Into LaTeX').first().json.pdf_file_name }}\""
+      },
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        880,
+        0
+      ],
+      "id": "6fe0a922-60b8-4669-a117-0e204815f8fd",
+      "name": "Execute Command"
+    },
+    {
+      "parameters": {
+        "fileSelector": "={{ $('Merge Body Into LaTeX').first().json.pdf_path }}",
+        "options": {
+          "dataPropertyName": "data"
+        }
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        1104,
+        0
+      ],
+      "id": "caa9d277-7cbd-4c5b-98c9-7582f13344b2",
+      "name": "Read/Write Files from Disk"
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "respondWith": "returnBinary",
+        "completionTitle": "Cover letter generated",
+        "completionMessage": "Your PDF is ready to download.",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        1328,
+        0
+      ],
+      "id": "3ce5929f-b40f-47c7-b4f2-33a4a3c9d3bb",
+      "name": "Form",
+      "webhookId": "84105ea7-0467-4af0-be15-98baf968e1a1"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:11434/api/chat",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.ollama_body }}",
+        "options": {
+          "timeout": 6000000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        432,
+        0
+      ],
+      "id": "705fcfb5-1380-41d1-8743-30d9bffe4db0",
+      "name": "HTTP Request1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const rawJson = $input.first().json;\nconst formTriggerData = $(\"Form Trigger\").first().json;\n\n// -----------------------------\n// 1. Read Ollama JSON response\n// -----------------------------\nlet responseText =\n  rawJson.message?.content ||\n  rawJson.response ||\n  rawJson.text ||\n  rawJson.output ||\n  rawJson.content ||\n  \"\";\n\nif (typeof responseText === \"object\") {\n  responseText = JSON.stringify(responseText);\n}\n\nif (!responseText) {\n  throw new Error(\n    \"No cover letter response found from Ollama. Output keys: \" +\n      Object.keys(rawJson).join(\", \")\n  );\n}\n\nresponseText = String(responseText)\n  .replace(/```json/gi, \"\")\n  .replace(/```latex/gi, \"\")\n  .replace(/```tex/gi, \"\")\n  .replace(/```/g, \"\")\n  .trim();\n\nconst jsonStart = responseText.indexOf(\"{\");\nconst jsonEnd = responseText.lastIndexOf(\"}\");\n\nif (jsonStart === -1 || jsonEnd === -1) {\n  throw new Error(\"Ollama did not return valid JSON. Response: \" + responseText);\n}\n\nresponseText = responseText.slice(jsonStart, jsonEnd + 1);\n\nlet parsed;\n\ntry {\n  parsed = JSON.parse(responseText);\n} catch (error) {\n  throw new Error(\n    \"Could not parse Ollama JSON. Error: \" +\n      error.message +\n      \". Response: \" +\n      responseText\n  );\n}\n\n// -----------------------------\n// 2. Helpers\n// -----------------------------\nfunction slugify(value) {\n  return String(value || \"\")\n    .trim()\n    .toLowerCase()\n    .replace(/&/g, \"and\")\n    .replace(/[^a-z0-9]+/g, \"_\")\n    .replace(/^_+|_+$/g, \"\")\n    .slice(0, 70);\n}\n\nfunction escapeRegex(value) {\n  return String(value || \"\").replace(/[.*+?^${}()|[\\]\\\\]/g, \"\\\\$&\");\n}\n\nfunction escapeLatexText(value) {\n  return String(value || \"\")\n    .replace(/\\\\/g, \"\\\\textbackslash{}\")\n    .replace(/&/g, \"\\\\&\")\n    .replace(/%/g, \"\\\\%\")\n    .replace(/#/g, \"\\\\#\")\n    .replace(/_/g, \"\\\\_\")\n    .replace(/\\$/g, \"\\\\$\")\n    .replace(/\\{/g, \"\\\\{\")\n    .replace(/\\}/g, \"\\\\}\")\n    .replace(/~/g, \"\\\\textasciitilde{}\")\n    .replace(/\\^/g, \"\\\\textasciicircum{}\");\n}\n\nfunction cleanPlainParagraph(value) {\n  let text = String(value || \"\")\n    .replace(/```json/gi, \"\")\n    .replace(/```latex/gi, \"\")\n    .replace(/```tex/gi, \"\")\n    .replace(/```/g, \"\")\n    .replace(/:contentReference\\[[^\\]]*\\]\\{[^}]*\\}/g, \"\")\n    .replace(/\\\\documentclass[\\s\\S]*?\\\\begin\\{document\\}/gi, \"\")\n    .replace(/\\\\end\\{document\\}/gi, \"\")\n    .replace(/^#+\\s*/gm, \"\")\n    .replace(/\\*\\*(.*?)\\*\\*/g, \"$1\")\n    .trim();\n\n  // Remove greetings/signatures if model adds them\n  text = text\n    .replace(/^\\\\textbf\\{Hello,\\}\\s*/i, \"\")\n    .replace(/^Hello,?\\s*/i, \"\")\n    .replace(/^Dear\\s+Hiring\\s+Manager,?\\s*/i, \"\")\n    .replace(/^Dear\\s+Recruiter,?\\s*/i, \"\")\n    .replace(/^Dear\\s+Team,?\\s*/i, \"\")\n    .replace(/Sincerely,[\\s\\S]*$/i, \"\")\n    .replace(/Thank you for your time and consideration\\.?[\\s\\S]*$/i, \"\")\n    .replace(/Thank you for considering my application\\.?[\\s\\S]*$/i, \"\")\n    .trim();\n\n  // Remove corporate filler\n  text = text\n    .replace(/I am excited to apply[^.]*\\.\\s*/gi, \"\")\n    .replace(/I am highly motivated[^.]*\\.\\s*/gi, \"\")\n    .replace(/I am eager to join your team[^.]*\\.\\s*/gi, \"\")\n    .replace(/I am confident that I can make a significant contribution[^.]*\\.\\s*/gi, \"\")\n    .replace(/align perfectly/gi, \"align well\")\n    .replace(/—/g, \"-\")\n    .replace(/–/g, \"-\")\n    .trim();\n\n  return text;\n}\n\nfunction splitIntoParagraphs(value) {\n  const text = String(value || \"\").trim();\n\n  if (!text) return [];\n\n  return text\n    .split(/\\n\\s*\\n+/)\n    .map((p) => p.trim())\n    .filter(Boolean);\n}\n\n// -----------------------------\n// 3. Get paragraphs\n// -----------------------------\nlet paragraphs = [];\n\nif (Array.isArray(parsed.body)) {\n  paragraphs = parsed.body.map(cleanPlainParagraph).filter(Boolean);\n} else if (typeof parsed.body === \"string\") {\n  paragraphs = splitIntoParagraphs(parsed.body).map(cleanPlainParagraph).filter(Boolean);\n} else if (typeof parsed.cover_letter === \"string\") {\n  paragraphs = splitIntoParagraphs(parsed.cover_letter).map(cleanPlainParagraph).filter(Boolean);\n}\n\nif (!paragraphs.length) {\n  throw new Error(\"No body paragraphs found in Ollama JSON. Parsed keys: \" + Object.keys(parsed).join(\", \"));\n}\n\n// Force max 4 paragraphs\nparagraphs = paragraphs.slice(0, 4);\n\n// If model returns fewer than 4, keep what exists but do not fail\nif (paragraphs.length < 3) {\n  throw new Error(\"Cover letter body too short. Paragraph count: \" + paragraphs.length);\n}\n\n// -----------------------------\n// 4. Build bold keywords\n// -----------------------------\nconst fallbackKeywords = [\n  \"full-stack\",\n  \"backend\",\n  \"frontend\",\n  \"REST APIs\",\n  \"APIs\",\n  \"React\",\n  \"Next.js\",\n  \"Redux\",\n  \"Node.js\",\n  \"Express\",\n  \"JavaScript\",\n  \"TypeScript\",\n  \"Python\",\n  \"Django\",\n  \"Java\",\n  \"Spring Boot\",\n  \"SQL\",\n  \"PostgreSQL\",\n  \"MongoDB\",\n  \"AWS\",\n  \"Azure\",\n  \"GCP\",\n  \"Docker\",\n  \"Kubernetes\",\n  \"CI/CD\",\n  \"Git\",\n  \"testing\",\n  \"debugging\",\n  \"dashboards\",\n  \"cloud\",\n  \"microservices\",\n  \"data-driven\",\n  \"Power BI\",\n  \"PowerBI\"\n];\n\nconst ollamaKeywords = Array.isArray(parsed.bold_keywords)\n  ? parsed.bold_keywords\n  : [];\n\nconst boldKeywords = [...new Set([...ollamaKeywords, ...fallbackKeywords])]\n  .filter(Boolean)\n  .map((value) => String(value).trim())\n  .filter(Boolean)\n  .sort((a, b) => b.length - a.length);\n\nfunction boldLatexText(latexText) {\n  let result = String(latexText || \"\");\n\n  // Protect existing textbf just in case\n  const protectedParts = [];\n  result = result.replace(/\\\\textbf\\{[^{}]*\\}/g, (match) => {\n    const token = `@@BOLD_PROTECT_${protectedParts.length}@@`;\n    protectedParts.push(match);\n    return token;\n  });\n\n  for (const keyword of boldKeywords) {\n    const cleanKeyword = String(keyword || \"\").trim();\n    if (!cleanKeyword) continue;\n\n    const regex = new RegExp(\n      `(^|[^A-Za-z0-9\\\\\\\\])(${escapeRegex(cleanKeyword)})(?=[^A-Za-z0-9]|$)`,\n      \"gi\"\n    );\n\n    result = result.replace(regex, (full, before, match) => {\n      if (match.includes(\"@@BOLD_PROTECT_\")) return full;\n      return `${before}\\\\textbf{${match}}`;\n    });\n  }\n\n  protectedParts.forEach((part, index) => {\n    result = result.replace(`@@BOLD_PROTECT_${index}@@`, part);\n  });\n\n  // Fix nested bolds\n  result = result\n    .replace(/\\\\textbf\\{\\\\textbf\\{([^{}]*)\\}\\}/g, \"\\\\textbf{$1}\")\n    .replace(/\\\\textbf\\{REST \\\\textbf\\{APIs\\}\\}/g, \"\\\\textbf{REST APIs}\")\n    .replace(/\\\\textbf\\{RESTful \\\\textbf\\{APIs\\}\\}/g, \"\\\\textbf{RESTful APIs}\")\n    .replace(/\\\\textbf\\{full-\\\\textbf\\{stack\\}\\}/g, \"\\\\textbf{full-stack}\");\n\n  return result;\n}\n\nconst latexParagraphs = paragraphs.map((paragraph) => {\n  const escaped = escapeLatexText(paragraph);\n  return boldLatexText(escaped);\n});\n\nconst generatedBody = latexParagraphs.join(\"\\n\\n\\\\vspace{0.7em}\\n\\n\");\n\n// -----------------------------\n// 5. File naming\n// -----------------------------\nconst companyRaw = formTriggerData.company_name || rawJson.company_name || \"company\";\nconst roleRaw = formTriggerData.role_title || rawJson.role_title || \"role\";\n\nconst company = slugify(companyRaw) || \"company\";\nconst role = slugify(roleRaw) || \"role\";\n\nconst baseName = `cover_letter_${company}_${role}`;\nconst workDir = `/home/node/.n8n-files/${baseName}`;\n\n// -----------------------------\n// 6. Cover letter LaTeX template for pdflatex\n// -----------------------------\nconst latexTemplate = String.raw`\\documentclass[11pt]{article}\n\n\\usepackage[a4paper, margin=0.85in]{geometry}\n\\usepackage[T1]{fontenc}\n\\usepackage[utf8]{inputenc}\n\\usepackage{lmodern}\n\\usepackage[hidelinks]{hyperref}\n\\usepackage{xcolor}\n\\usepackage{parskip}\n\\usepackage{microtype}\n\n\\pagenumbering{gobble}\n\\setlength{\\parindent}{0pt}\n\\setlength{\\parskip}{0.55em}\n\n\\begin{document}\n\n\\textbf{Jaydipsinh Padhiyar}\\\\\n2309 Brunswicks St\\\\\nHalifax, NS B3K 2Z1\\\\\n\\href{mailto:jaydipadhiyar27@gmail.com}{jaydipadhiyar27@gmail.com}\\\\\n+1 (782) 882 6260\\\\\n\\href{https://jaydipsinh.netlify.app/}{Portfolio}\n\n\\vspace{1em}\n\n\\textbf{Hello,}\n\n\\vspace{0.6em}\n\nOLD BODY PLACEHOLDER\n\n\\vspace{0.8em}\n\nSincerely,\\\\\n\\textbf{Jaydipsinh Padhiyar}\n\n\\end{document}\n`;\n\nconst updatedLatex = latexTemplate.replace(\"OLD BODY PLACEHOLDER\", generatedBody);\n\nconst latexBase64 = Buffer.from(updatedLatex, \"utf8\").toString(\"base64\");\n\nconst changeLogText = JSON.stringify(\n  {\n    note: \"Generated cover letter body and compiled with pdflatex.\",\n    company_name: companyRaw,\n    role_title: roleRaw,\n    summary: parsed.summary || \"\",\n    paragraph_count: paragraphs.length,\n    bold_keywords_used: boldKeywords,\n    paragraphs\n  },\n  null,\n  2\n);\n\nconst changeLogBase64 = Buffer.from(changeLogText, \"utf8\").toString(\"base64\");\n\nreturn [\n  {\n    json: {\n      company_name: companyRaw,\n      role_title: roleRaw,\n\n      generated_body: generatedBody,\n      updated_latex: updatedLatex,\n      latex_base64: latexBase64,\n\n      change_log_base64: changeLogBase64,\n\n      base_name: baseName,\n      work_dir: workDir,\n      tex_path: `${workDir}/${baseName}.tex`,\n      pdf_path: `${workDir}/${baseName}.pdf`,\n      log_path: `${workDir}/${baseName}_changes.json`,\n\n      tex_file_name: `${baseName}.tex`,\n      pdf_file_name: `${baseName}.pdf`,\n      log_file_name: `${baseName}_changes.json`\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        656,
+        0
+      ],
+      "id": "80157d01-d059-40b2-8c96-b589d8fd03f3",
+      "name": "Merge Body Into LaTeX"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nconst companyName = input.company_name || input[\"Company Name\"] || \"\";\nconst roleTitle = input.role_title || input[\"Role Title\"] || \"\";\nconst jobDescription = input.job_description || input[\"Job Description\"] || \"\";\nconst customPrompt = input.custom_prompt || input[\"Custom Prompt\"] || \"\";\nconst resumeLatex =\n  input.resume_latex ||\n  input[\"Resume Latex\"] ||\n  input[\"Resume LaTeX\"] ||\n  \"\";\n\nconst extraNotes = input.extra_notes || input[\"Extra Notes\"] || \"\";\nconst latexTemplate =\n  input.latex_template ||\n  input[\"LaTeX Template\"] ||\n  input[\"Latex Template\"] ||\n  \"\";\n\nif (!jobDescription) {\n  throw new Error(\n    \"Job Description is required. Available input keys: \" +\n      Object.keys(input).join(\", \")\n  );\n}\n\nif (!resumeLatex) {\n  throw new Error(\n    \"Resume Latex is required. Available input keys: \" +\n      Object.keys(input).join(\", \")\n  );\n}\n\nfunction cleanLatexToResumeSummary(latex) {\n  let text = String(latex || \"\");\n\n  text = text\n    // Remove LaTeX comments\n    .split(\"\\n\")\n    .filter((line) => !line.trim().startsWith(\"%\"))\n    .join(\"\\n\")\n\n    // Keep useful visible text from common LaTeX commands\n    .replace(/\\\\href\\{[^{}]*\\}\\{([^{}]*)\\}/g, \"$1\")\n    .replace(/\\\\textbf\\{([^{}]*)\\}/g, \"$1\")\n    .replace(/\\\\textit\\{([^{}]*)\\}/g, \"$1\")\n    .replace(/\\\\textcolor\\{[^{}]*\\}\\{([^{}]*)\\}/g, \"$1\")\n    .replace(/\\\\section\\{([^{}]*)\\}/g, \"\\nSECTION: $1\\n\")\n    .replace(/\\\\headingBf\\{([^{}]*)\\}\\{([^{}]*)\\}/g, \"\\n$1 | $2\\n\")\n    .replace(/\\\\headingIt\\{([^{}]*)\\}\\{([^{}]*)\\}/g, \"$1 | $2\\n\")\n\n    // Convert bullets\n    .replace(/\\\\item\\[[^\\]]*\\]/g, \"-\")\n    .replace(/\\\\item/g, \"-\")\n\n    // Remove environments\n    .replace(/\\\\begin\\{[^{}]*\\}/g, \"\")\n    .replace(/\\\\end\\{[^{}]*\\}/g, \"\")\n\n    // Remove remaining LaTeX commands but keep regular text\n    .replace(/\\\\[a-zA-Z]+\\*?(?:\\[[^\\]]*\\])?/g, \"\")\n\n    // Cleanup\n    .replace(/[{}]/g, \"\")\n    .replace(/[ \\t]+/g, \" \")\n    .replace(/\\n{3,}/g, \"\\n\\n\")\n    .trim();\n\n  // Keep it small so the model does not copy full resume structure\n  return text.slice(0, 4500);\n}\n\nconst resumeSummary = cleanLatexToResumeSummary(resumeLatex);\n\nconst safeJobDescription = String(jobDescription).slice(0, 5000);\nconst safeCustomPrompt = String(customPrompt).slice(0, 1200);\nconst safeExtraNotes = String(extraNotes).slice(0, 1200);\n\nconst prompt = `\nYou are writing a short cover letter body.\n\nCRITICAL OUTPUT RULE:\nReturn ONLY one valid JSON object.\nDo not write markdown.\nDo not write code fences.\nDo not write explanations.\nDo not write anything before the JSON.\nDo not write anything after the JSON.\n\nThe JSON object must have EXACTLY these 3 keys:\n{\n  \"body\": [\n    \"Paragraph 1\",\n    \"Paragraph 2\",\n    \"Paragraph 3\",\n    \"Paragraph 4\"\n  ],\n  \"bold_keywords\": [],\n  \"summary\": \"\"\n}\n\nDo not add any other keys.\nDo not add skills.\nDo not add experience.\nDo not add education.\nDo not add projects.\nDo not add certifications.\nDo not add resume sections.\n\nBODY RULES:\n- body must contain exactly 4 paragraphs.\n- Total body length must be 250 to 350 words.\n- Each paragraph should be 3 to 5 sentences.\n- Do not include Hello.\n- Do not include Dear Hiring Manager.\n- Do not include Sincerely.\n- Do not include a name, email, phone, address, links, or signature.\n- Do not use bullet points.\n- Do not use em dash.\n- Do not say \"I am excited to apply\".\n- Do not sound corporate, fake, desperate, or overly formal.\n- Use a confident but grounded early-career voice.\n- Use simple natural language.\n- Use only facts from the resume, job description, and extra notes.\n- Do not invent experience, tools, dates, companies, numbers, awards, or achievements.\n\nPARAGRAPH CONTENT:\nParagraph 1: Why this company or role is interesting, connected to the job description.\nParagraph 2: Relevant experience from the resume connected to the role.\nParagraph 3: Ownership, debugging, collaboration, systems thinking, and learning.\nParagraph 4: Natural confident closing.\n\nBOLD KEYWORDS RULES:\n- bold_keywords must contain 8 to 15 short exact keywords from the resume or job description.\n- Examples: React, Next.js, Python, Django, REST APIs, SQL, AWS, Azure, Docker, Kubernetes, CI/CD, dashboards, debugging, backend, full-stack.\n\nCompany:\n${companyName}\n\nRole:\n${roleTitle}\n\nJob description:\n${safeJobDescription}\n\nResume:\n${resumeSummary}\n\nUser style:\n${safeCustomPrompt}\n\nExtra notes:\n${safeExtraNotes}\n`;\n\nreturn [\n  {\n    json: {\n      company_name: companyName,\n      role_title: roleTitle,\n      job_description: jobDescription,\n      custom_prompt: customPrompt,\n      resume_latex: resumeLatex,\n      resume_summary: resumeSummary,\n      extra_notes: extraNotes,\n      latex_template: latexTemplate,\n\n      // IMPORTANT:\n      // Your HTTP Request node must send this exact object as the body:\n      // {{ $json.ollama_body }}\n      ollama_body: {\n        model: \"gemma3:latest\",\n        messages: [\n          {\n            role: \"user\",\n            content: prompt\n          }\n        ],\n        stream: false,\n        format: \"json\",\n        options: {\n          temperature: 0.15,\n          num_predict: 650,\n          top_p: 0.75,\n          repeat_penalty: 1.2,\n          num_ctx: 8192\n        }\n      }\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "586ccb00-f308-46a1-8b85-67cea08e28e3",
+      "name": "Build Ollama Request"
+    },
+    {
+      "parameters": {
+        "formTitle": "Cover Letter Generator",
+        "formDescription": "Paste your LaTeX template, job description, and prompt. This will generate a downloadable PDF.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "LaTeX Template",
+              "fieldType": "textarea",
+              "fieldName": "latex_template",
+              "defaultValue": "\\documentclass[11pt]{article}\n\\usepackage[a4paper, margin=1in]{geometry}\n\\usepackage{lmodern}\n\\usepackage{parskip}\n\\usepackage{hyperref}\n\\usepackage{setspace}\n\\pagenumbering{gobble}\n% No paragraph indentation\n\\setlength{\\parindent}{0pt}\n\n\\begin{document}\n\n% -------------------\n% Header\n% -------------------\n\n\\textbf{Jaydipsinh Padhiyar} \\\\\n2309 Brunswicks St\\\\\nHalifax, NS B3k 2Z1 \\\\\n\n\\vspace{1em}\n\\noindent\n\\textbf{Hello,}\n\n\\vspace{1em}\n\nReCover stands out to me because the role is not just about building another web application. It is about building \\textbf{data-driven software that helps governments, engineers, and building owners make better retrofit decisions}, which feels like meaningful infrastructure work. The mix of \\textbf{full-stack development, SQL data platforms, APIs, cloud deployment, and climate-focused tools} is exactly the kind of practical software problem I enjoy working on. :contentReference[oaicite:0]{index=0}\n\nIn my recent work at the \\textbf{Persuasive Computing Lab}, I built full-stack features using \\textbf{Django, REST APIs, Next.js, React, Redux, and WebSockets}. I worked on backend services, user-facing dashboards, data-driven workflows, and debugging issues across the stack. I also have project experience with \\textbf{Node.js, Express, Python, PostgreSQL, MongoDB, Docker, CI/CD, AWS, GCP, and Kubernetes}, where I focused on building reliable systems, connecting services, and making applications easier to deploy and maintain.\n\nWhat matches well with this role is the combination of \\textbf{backend APIs, SQL/data systems, cloud infrastructure, and frontend dashboards}. For example, I have worked on projects involving \\textbf{data pipelines, cloud deployments, containerized applications, and analytical dashboards}, including systems that processed structured data and presented it clearly for users. I have not worked directly in building science, but I am comfortable learning domain knowledge quickly and turning technical requirements into working software.\n\nI tend to take ownership by understanding how the whole system fits together, not just the ticket in front of me. When something breaks, I like tracing the issue, checking the data flow, and fixing the root cause instead of only patching the surface problem. I am still early in my career, but I have built the habit of staying consistent, learning carefully, and improving through hands-on work.\n\nI would be glad to bring that mindset to ReCover and contribute to tools that support real climate and retrofit decisions at scale.\n\n\\vspace{0.5em}\n\\noindent\n\n\\noindent\nSincerely,\\\\\n\\textbf{Jaydipsinh Padhiyar}\\\\\n\\href{mailto:jaydipadhiyar27@gmail.com}{jaydipadhiyar27@gmail.com}\\\\\n+1 (782) 882 6260 \\\\\n\\href{https://jaydipsinh.netlify.app/}{Portfolio}\\\\\n\n\\end{document}\n\n",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Job Description",
+              "fieldType": "textarea",
+              "fieldName": "job_description",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Custom Prompt",
+              "fieldType": "textarea",
+              "fieldName": "custom_prompt",
+              "defaultValue": "Write a cover letter for the following job description in MY style.\n\nIMPORTANT REQUIREMENTS (VERY STRICT):\n- Keep it SHORT (max 4–5 paragraphs)\n- Must sound HUMAN, not AI or corporate\n- No fluff, no generic phrases like “I am excited to apply”\n- No begging tone, no desperation\n- Confident but grounded (early-career but capable)\n- Use simple, natural language (like how a real person speaks)\n- Avoid em dashes completely\n- Focus on REAL experience, do NOT invent anything\n- Highlight full-stack, backend, APIs, cloud, and problem-solving experience when relevant\n- Show ownership mindset (debugging, fixing issues, understanding systems)\n- Add 1 subtle line showing persistence / discipline (but NOT emotional or begging)\n- Align strongly with the role (mirror keywords naturally, not forced)\n\nSTRUCTURE:\n1. Strong hook (WHY this role actually interests me, specific and real)\n2. My relevant experience (Persuasive Computing Lab + projects + tech stack)\n3. My skills aligned to job (APIs, cloud, Docker, CI/CD, data systems, etc.)\n4. Why I am a good fit (ownership, learning fast, systems thinking)\n5. Closing (simple, confident, no fluff)\n\nTONE:\n- Real human\n- Slightly conversational but still professional\n- No overused phrases\n- No exaggeration\n- No fake claims\n\nOUTPUT FORMAT (bold relevant points):\n- Give LaTeX version using the template:\n\n---",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Company Name",
+              "fieldName": "company_name"
+            },
+            {
+              "fieldLabel": "Role Title",
+              "fieldName": "role_title"
+            },
+            {
+              "fieldLabel": "Resume Latex",
+              "fieldType": "textarea",
+              "fieldName": "resume_latex",
+              "defaultValue": "  %---------%\n  % Summary %\n  %---------%\n\n\\section{Summary}\nFull-stack Software Developer with 2+ years of experience building \\textbf{scalable}, \\textbf{cloud-native applications}. Strong proficiency in \\textbf{Node.js}, \\textbf{Java}, \\textbf{Spring Boot}, and \\textbf{React}, with hands-on experience designing \\textbf{RESTful APIs}, integrating \\textbf{microservices}. Experienced in deploying and maintaining systems on \\textbf{AWS}, \\textbf{Azure}, and \\textbf{GCP}, with a strong focus on \\textbf{CI/CD}, Kubernetes, Agile.\n\n\n \n  %--------%\n  % Skills %\n  %--------%\n\n\\section{Skills}\n\n\\begin{multicols}{1}\n  \\begin{itemize}[itemsep=-2px, parsep=1pt, leftmargin=75pt]\n    \\item[\\textbf{Languages}] \\textbf{Java}, \\textbf{JavaScript}, \\textbf{TypeScript}, Python, SQL\n    \\item[\\textbf{Front-End}] \\textbf{React}, Redux, Next.js, HTML, CSS\n    \\item[\\textbf{Back-End}] \\textbf{Node.js}, \\textbf{Express.js}, \\textbf{Spring Boot}, Django\n    \\item[\\textbf{APIs}] \\textbf{REST}, OpenAPI, Swagger, GraphQL\n    \\item[\\textbf{Databases}] \\textbf{PostgreSQL}, \\textbf{MongoDB}, DynamoDB, MSSQL\n    \\item[\\textbf{Cloud}] \\textbf{AWS}, \\textbf{Azure}, \\textbf{GCP}\n    \\item[\\textbf{DevOps}] \\textbf{Docker}, \\textbf{Kubernetes}, CI/CD, Jenkins, Terraform\n    \\item[\\textbf{Testing}] \\textbf{JUnit}, Mockito, Jest, Cypress\n    \\item[\\textbf{Tools}] Git, GitHub, GitLab, Linux, Bash, Jira\n    \\item[\\textbf{Concepts}] \\textbf{Microservices}, \\textbf{Cloud-Native}, Agile, Performance Optimization, Security\n  \\end{itemize}\n\\end{multicols}\n\n\n  \n  %------------%\n  % Experience %\n  %------------%\n\n  \\section{Experience}\n\n\\headingBf{Intern Support Consultant}{Feb 2026 -- Present}  \n\\headingIt{Nova Scotia Health Authority}{}  \n\\begin{resume_list}\n\\item Built \\textbf{Excel \\& PowerBI dashboards} to track deployment, downtime planning, and metrics for the Health CIS rollout.\n\\item Analyzed operational datasets and generated \\textbf{data-driven reports} supporting Deployment \\& Operations planning.\n\\item Coordinated \\textbf{deployment schedules and readiness tracking} using structured planning sheets.\n\\item Collaborated with \\textbf{Command Centre, Support Centre, and At-The-Elbow teams} to maintain operational stability.\n\\item Contributed to development of \\textbf{Slow Down Survivor}, a \\textbf{Godot-based} strategy simulation used to model clinic readiness planning and operational decision-making.\n\\item Implemented \\textbf{game logic and UI components using GDScript}, representing clinic metrics such as Slow Down, Staff Training, Waitlist Capacity, and Morale.\n\\end{resume_list}\n\n\n\n\\headingBf{Software Developer}{Jan 2025 -- May 2025}  \n\\headingIt{Persuasive Computing Lab \\href{https://github.com/JAYDIPSINH27/BiasBreaker}{\\textcolor{blue}{\\small{\\faGithub}}}}{}  \n  \\begin{resume_list}\n    \\item Developed full-stack web application using \\textbf{Django REST APIs} and \\textbf{React/Redux}, implementing requirements analysis, design documentation, and comprehensive testing strategies.\n    \\item Participated in daily \\textbf{Agile stand-ups}, sprint planning, and peer \\textbf{code reviews}, collaborating with cross-functional team members to ensure code quality and project alignment.\n    \\item Designed and implemented \\textbf{RESTful APIs} for real-time data processing, quiz scoring, and content delivery with proper error handling and validation.\n    \\item Applied \\textbf{object-oriented design principles} and created UML diagrams for system architecture.\n    \\item Integrated third-party SDKs (Tobii Pro SDK, Hugging Face) and handled complex inter-system communication.\n  \\end{resume_list}\n\n\\headingBf{Software Developer Intern}{Jan 2023 -- Apr 2023}  \n\\headingIt{Bhaskaracharya National Institute for Space Applications and Geo-informatics \\href{https://drive.google.com/file/d/1ZSOdH_hylqyPQ_0Mw5SfJDFroob7JKct/view?usp=sharing}{\\textcolor{blue}{\\small{\\faLink}}} \\href{https://github.com/BISAG-N/Road-Surface-Quality-Investigation}{\\textcolor{blue}{\\small{\\faGithub}}}}{}  \n  \\begin{resume_list}\n    \\item Engineered a road surface quality investigation system using full-stack technologies (\\textbf{MERN}, \\textbf{Django}, OpenCV) following structured SDLC methodology.\n    \\item Collaborated with data scientists and engineers to integrate \\textbf{deep learning models} (FasterRCNN, SSD, RetinaNet), improving detection accuracy by 15\\% through iterative testing and optimization.\n    \\item Developed and optimized \\textbf{Python} data processing pipelines for large spatial datasets, reducing image retrieval time by 60\\% through multithreading and efficient algorithms.\n    \\item Participated in technical design reviews, presented progress to stakeholders, and documented software documents.\n    \\item Utilized \\textbf{Jira} for task tracking, reported blockers in daily stand-ups, and aligned deliverables with project milestones.\n    \\item Performed comprehensive software testing including unit tests, integration tests, and validation of fixes.\n  \\end{resume_list}\n\n\\headingBf{Software Developer Trainee}{Jul 2021 -- Nov 2021}  \n\\headingIt{CHARUSAT University \\href{https://drive.google.com/file/d/1lRxrKSH9eOEC-s-tBNP8qNhqH5VE6cK0/view?usp=sharing}{\\textcolor{blue}{\\small{\\faLink}}} \\href{https://github.com/Infikey-Technologies-Internship/InstituteManagementPortal}{\\textcolor{blue}{\\small{\\faGithub}}}}{}  \n  \\begin{resume_list}\n    \\item Developed and deployed an Institute Management Portal on \\textbf{Azure App Services} following \\textbf{cloud-native architecture}.\n    \\item Implemented \\textbf{RESTful APIs} using best practices for scalability, security, and maintainability.\n    \\item Integrated \\textbf{Azure CosmosDB} for data management, designing schema and optimizing queries for performance.\n    \\item Applied \\textbf{CI/CD concepts} and cloud deployment strategies through structured mentorship and hands-on experience.\n    \\item Participated in code reviews, technical documentation, and knowledge-sharing sessions with team members.\n  \\end{resume_list}\n\n\\newpage\n\\headingBf{Full Stack Developer Intern}{May 2021 -- Jul 2021}  \n\\headingIt{CHARUSAT University \\href{https://drive.google.com/file/d/1Ej3lp81SUVch07Icw5CER24K16UwHV8l/view?usp=sharing}{\\textcolor{blue}{\\small{\\faLink}}}}{}  \n  \\begin{resume_list}\n    \\item Developed inventory management system with requirements gathering, design, implementation, and testing phases.\n    \\item Designed \\textbf{MySQL} database schema with normalized tables, optimized CRUD operations, and complex queries.\n    \\item Performed software requirements analysis and created technical documentation including design specifications.\n    \\item Increased operational accuracy by 15\\% through improved tracking functionality and automated processes.\n  \\end{resume_list}\n\n\n  %-----------%\n  % Education %\n  %-----------%\n\n  \\section{Education}\n\n  \\headingBf{Dalhousie University}{Jan 2024 - May 2025}\n  \\headingIt{Masters in Applied Computer Science}{ 3.94/4.3 GPA}\n  \\headingIt{courses: Advanced Concepts of Software Development, Advanced Web Development, Data Management, Warehousing \\& Analytics }{}\n\n\\vspace{10pt}\n\\headingBf{CHARUSAT University}{Jun 2019 - Apr 2023}\n  \\headingIt{Bachelors of Technology in Computer Engineering}{ 4.0/4.3 GPA}\n  \\headingIt{courses: Data Structures,\nAnalysis of Algorithms, Computer Networking, Artificial Intelligence, Databases, Theory of Computation }{}\n\\headingIt{Operating Systems, Software Engineering, Digital Image Processing, Design of Language Processor}{}\n\n\n  %----------------------------%\n  % Projects %\n  %----------------------------%\n\n  \\section{Projects}\n\n\n\\headingBf{Les Chat Aws}{(AWS, EC2, VPC, RDS, CloudWatch, SNS, Elastic Load Balancing, GraphQL) \\href{https://github.com/JAYDIPSINH27/les-chat-aws}{\\textcolor{blue}{\\small{\\faLink}}}}  \n% \\headingIt{}{}  \n\\begin{resume_list}\n  \\item Designed a scalable, multi-tier AWS infrastructure using \\textbf{CloudFormation} to ensure high availability and resilience.\n  \\item Implemented auto-scaling and self-healing cloud infrastructure for optimized resource utilization.\n  \\item Developed a secure \\textbf{RDS PostgreSQL} database with multi-AZ deployment for fault tolerance.\n  \\item Deployed containerized applications using \\textbf{Docker} to enable efficient cloud deployments.\n  \\item Configured comprehensive monitoring with \\textbf{AWS CloudWatch} and set real-time alerts.\n  \\item Ensured high availability with a fault-tolerant network architecture using VPC, private subnets, and NAT Gateway.\n  \\item Automated deployments with scripts using infrastructure-as-code approach.\n\\end{resume_list}\n\n\\headingBf{DalVacationHome}{(ReactJS, NodeJS, Python, AWS, GCP, Docker, DynamoDB) \\href{https://github.com/JAYDIPSINH27/DalVacationHome}{\\textcolor{blue}{\\small{\\faLink}}}}  \n% \\headingIt{}{}  \n\\begin{resume_list}\n  \\item Architected and deployed a multi-cloud booking app on \\textbf{AWS} and \\textbf{Google Cloud}, ensuring scalability and uptime.\n  \\item Designed an Amazon Lex Chatbot with \\textbf{AWS Lambda}-based booking logic for enhanced user interaction.\n  \\item Implemented an ETL process using \\textbf{BigQuery and Google Natural Language API} for sentiment analysis.\n  \\item Automated deployments via GitLab CI/CD, implementing Infrastructure as Code with \\textbf{CloudFormation}.\n  % \\item Automated deployments via GitLab CI/CD, implementing Infrastructure as Code with \\textbf{CloudFormation} and managing Jira board.\n  \\item Created booking and notifications using AWS SNS, SQS, and GCP Pub/Sub for real-time communication.\n  % \\item Architected an asynchronous user-agent chat using GCP Pub/Sub for seamless ticket generation and support.\n\\end{resume_list}\n\n\\headingBf{FurrEverHome}{(SpringBoot, ReactJS, MySQL, Maven, Junit, Docker) \\href{https://github.com/JAYDIPSINH27/FurrEverHome}{\\textcolor{blue}{\\small{\\faLink}}}}  \n% \\headingIt{}{}  \n\\begin{resume_list}\n  \\item Created a \\textbf{CI/CD pipeline} with Docker and GitLab, reducing build and deployment times by 60\\%.\n  \\item Applied \\textbf{Test Driven Development (TDD)} using JUnit to achieve 80\\% code coverage with Code quality gate.\n  \\item Followed a structured \\textbf{SDLC} approach from planning to deployment to meet all requirements.\n  % \\item Served as Scrum Master and followed Agile methodologies using GitLab boards.\n  \\item Deployed the application on a university VM ensuring secure, scalable operations with 99.9\\% uptime.\n  % \\item Integrated GetStream.io's chat APIs for communication between adopters and shelters.\n\\end{resume_list}\n\n\\headingBf{BidSphere}\n{(MongoDB, AWS, ReactJS, NodeJS, ExpressJS, SpringBoot, Microservice, Stripe) \\href{https://github.com/JAYDIPSINH27/BidSphere}{\\textcolor{blue}{\\small{\\faLink}}}}{}  \n\\begin{resume_list}\n  \\item Architected a \\textbf{microservices} backend using NodeJS and Spring Boot, enhancing performance and collaboration.\n  \\item Developed a document and tender management module using \\textbf{Spring Boot} and AWS S3 for secure storage.\n  \\item Integrated Stripe's payment gateway into Node.js microservices for secure transaction processing.\n  \\item Designed a landing page with Framer Motion's AnimatePresence, optimizing DOM manipulation for faster loads.\n  % \\item Applied Atomic Design in ReactJS to build over 20 reusable UI components, reducing development time.\n  \\item Managed tender, bid, and user data using MongoDB to improve query performance.\n\\end{resume_list}\n\n\n\\headingBf{K8s Microservice}{(GCP, Terraform, NodeJS, ExpressJS, Microservice, Kubernetes) \\href{https://github.com/JAYDIPSINH27/k8s-microservice}{\\textcolor{blue}{\\small{\\faLink}}}}  \n% \\headingIt{}{}  \n\\begin{resume_list}\n  \\item Developed a CI/CD pipeline using Google Cloud Build, automating deployments to Google Kubernetes Engine (\\textbf{GKE}).\n  \\item Configured a \\textbf{persistent volume} and designed RESTful APIs for effective inter-service communication.\n  \\item Automated GKE cluster provisioning using \\textbf{Terraform} to optimize infrastructure setup.\n  \\item Developed microservices using Node.js and Express.js to facilitate RESTful API communication between containers.\n  % \\item Containerized applications with Docker to ensure scalability and efficient resource management on GCP.\n  \\item Configured Kubernetes YAML files to manage container orchestration and service exposure.\n\\end{resume_list}\n\n% \\headingBf{SOFABoot \\textendash{} Open Source Contribution (Merged PR)}{(Java, JUnit~5, Mockito, Spring Boot/SOFABoot) \\href{https://github.com/JAYDIPSINH27/sofa-boot/pull/1/commits}{\\textcolor{blue}{\\small{\\faLink}}}}\n% \\begin{resume_list}\n%   \\item Authored unit tests for core components (\\texttt{startup/StartupReporter}, \\texttt{compatibility/VerificationResultTests}, \\texttt{util/SofaBootEnvUtilsTests}) to harden startup metrics, compatibility checks, and environment utilities.\n%   \\item Documented coverage in the PR (images), showing clear increases in line and branch coverage for the touched modules.\n%   \\item Expanded edge-case validation for startup reporting, verification outcomes (success/failure states), and environment variable resolution to ensure deterministic behavior.\n%   \\item Adopted \\textbf{JUnit~5} + \\textbf{Mockito} patterns for isolated, fast tests with concise assertions and clear failure messages.\n%   \\item PR merged into the upstream \\textbf{SOFABoot} codebase as an open-source contribution.\n% \\end{resume_list}\n\n\n%--------%\n% Certifications & Contributions %\n%--------%\n\\section{Certifications \\& Contributions}\n\n\\begin{itemize}[itemsep=-2px, parsep=1pt, leftmargin=75pt]\n  \\item[\\textbf{Award}] Received cash prize and certificate of merit for \\textbf{1st rank} in the first semester.\n  \\item[\\textbf{Scholarship}] Received MYSY Scholarship throughout the bachelor's degree for scoring above 80\\% in Grade 12.\n  \\item[\\textbf{NPTEL/IITM}] Elite in ``Design and Analysis of Algorithms'' and ``Introduction to Operating Systems''. \\href{https://drive.google.com/file/d/1EarEPuC-vlEy10xRMF0RTcF661rec1FU/view?usp=share_link}{\\textcolor{blue}{\\small{\\faLink}}}\n  \\item[\\textbf{Google}] Foundation of Project Management (Coursera); Agile methodologies. \\href{https://www.coursera.org/account/accomplishments/verify/UQHDN5XHHKH4}{\\textcolor{blue}{\\small{\\faLink}}}\n  \\item[\\textbf{Oracle}] Oracle Cloud Infrastructure Associate. \\href{https://drive.google.com/file/d/1KJZwxxNAg2cJVqnk1L-Oh0vTQJRwBZq8/view?usp=sharing}{\\textcolor{blue}{\\small{\\faLink}}}\n\\end{itemize}\n\n% %---------------------------%\n% % Extracurricular Activities %\n% %---------------------------%\n% \\section{Extracurricular Activities}\n\n% \\begin{itemize}[itemsep=-2px, parsep=1pt, leftmargin=75pt]\n%   \\item[\\textbf{Workshop}] Led a two-day Node.js workshop for over 50 students, strengthening server-side development skills. \\href{https://drive.google.com/file/d/1nB99-cLJtYwV9K-Dku-XSsdT-_4ne3Xi/view?usp=share_link}{\\textcolor{blue}{\\small{\\faLink}}}\n%   \\item[\\textbf{Organizer}] Coordinated ``CodePie,'' a competitive coding event driving campus-wide engagement. \\href{https://drive.google.com/file/d/1tpws88NVZNmON7CDDcE3JpvpxAvUKLJk/view?usp=share_link}{\\textcolor{blue}{\\small{\\faLink}}}\n%   \\item[\\textbf{Expert (Chegg)}] Solved computer science problems and answered student questions on Chegg as a Subject Matter Expert, providing clear, step-by-step explanations in algorithms, data structures, and programming.\n% \\end{itemize}\n\n\n\n\n\n\\end{document}"
+            },
+            {
+              "fieldLabel": "Extra Notes",
+              "fieldType": "textarea",
+              "fieldName": "extra_notes"
+            }
+          ]
+        },
+        "options": {
+          "customCss": ":root {\n\t--font-family: 'Open Sans', sans-serif;\n\t--font-weight-normal: 400;\n\t--font-weight-bold: 600;\n\t--font-size-body: 12px;\n\t--font-size-label: 13px;\n\t--font-size-test-notice: 11px;\n\t--font-size-input: 13px;\n\t--font-size-header: 20px;\n\t--font-size-paragraph: 13px;\n\t--font-size-link: 12px;\n\t--font-size-error: 12px;\n\t--font-size-subheader: 13px;\n\n\t--color-background: #fbfcfe;\n\t--color-test-notice-text: #e6a23d;\n\t--color-test-notice-bg: #fefaf6;\n\t--color-test-notice-border: #f6dcb7;\n\t--color-card-bg: #ffffff;\n\t--color-card-border: #dbdfe7;\n\t--color-card-shadow: rgba(99, 77, 255, 0.06);\n\t--color-header: #3f3f46;\n\t--color-label: #444444;\n\t--color-input-border: #dbdfe7;\n\t--color-input-text: #36383d;\n\t--color-focus-border: rgb(90, 76, 194);\n\t--color-submit-btn-bg: #ff6d5a;\n\t--color-submit-btn-text: #ffffff;\n\t--color-required: #ff6d5a;\n\n\t--border-radius-card: 10px;\n\t--border-radius-input: 6px;\n\t--card-border-radius: 10px;\n\n\t--padding-container-top: 8px;\n\t--padding-card: 16px;\n\t--padding-test-notice-vertical: 8px;\n\t--padding-test-notice-horizontal: 16px;\n\t--margin-bottom-card: 8px;\n\t--padding-form-input: 8px;\n\t--card-padding: 16px;\n\t--card-margin-bottom: 8px;\n\n\t/* Make form wide */\n\t--container-width: min(96vw, 1500px);\n\n\t--submit-btn-height: 42px;\n\t--box-shadow-card: 0px 4px 16px 0px var(--color-card-shadow);\n}\n\n/* Full page */\nhtml,\nbody {\n\twidth: 100% !important;\n\tmin-height: 100vh !important;\n\tmargin: 0 !important;\n\tpadding: 0 !important;\n\toverflow-x: hidden !important;\n\tbackground: var(--color-background) !important;\n}\n\n/* Make all containers wide */\nbody > div,\nmain,\n.container,\n[class*=\"container\"] {\n\tmax-width: 1500px !important;\n\twidth: 96vw !important;\n}\n\n/* Main card */\n#n8n-form,\n[class*=\"card\"] {\n\tmax-width: 1500px !important;\n\twidth: 96vw !important;\n\tmargin: 8px auto !important;\n\tpadding: 16px 20px !important;\n\tbox-sizing: border-box !important;\n}\n\n/* Smaller title area */\nh1 {\n\tfont-size: 20px !important;\n\tmargin: 0 0 4px 0 !important;\n}\n\np {\n\tfont-size: 13px !important;\n\tline-height: 1.3 !important;\n\tmargin: 0 0 8px 0 !important;\n}\n\n/* Labels */\nlabel {\n\tfont-size: 13px !important;\n\tmargin-bottom: 3px !important;\n\tfont-weight: 600 !important;\n}\n\n/* Inputs */\ninput,\ntextarea,\nselect {\n\twidth: 100% !important;\n\tbox-sizing: border-box !important;\n\tfont-size: 13px !important;\n\tpadding: 8px 10px !important;\n\tborder-radius: 6px !important;\n}\n\n/* Make fields compact */\ntextarea {\n\tmin-height: 90px !important;\n\tmax-height: 180px !important;\n\tresize: vertical !important;\n\tfont-family: Consolas, \"Courier New\", monospace !important;\n\tfont-size: 12px !important;\n\tline-height: 1.25 !important;\n}\n\n/* Bigger boxes, but still one-page friendly */\ntextarea[name=\"job_description\"],\ntextarea[name=\"resume_latex\"] {\n\tmin-height: 190px !important;\n\tmax-height: 230px !important;\n}\n\ntextarea[name=\"custom_prompt\"],\ntextarea[name=\"extra_notes\"] {\n\tmin-height: 105px !important;\n\tmax-height: 140px !important;\n}\n\n/* Reduce field spacing */\nform div,\n[class*=\"form\"] div {\n\tmargin-bottom: 6px !important;\n}\n\n/* Submit button compact */\nbutton,\nbutton[type=\"submit\"] {\n\theight: 42px !important;\n\tmin-height: 42px !important;\n\tpadding: 8px 16px !important;\n\tfont-size: 14px !important;\n\tfont-weight: 700 !important;\n\twidth: 100% !important;\n\tmargin-top: 6px !important;\n}\n\n/* Test notice compact */\n[class*=\"test\"],\n[class*=\"notice\"] {\n\tmax-width: 1500px !important;\n\twidth: 96vw !important;\n\tmargin: 8px auto !important;\n\tpadding: 8px 14px !important;\n\tfont-size: 11px !important;\n\tbox-sizing: border-box !important;\n}\n\n/* Hide extra whitespace if n8n adds wrappers */\nbr {\n\tdisplay: none !important;\n}\n\n/* Mobile fallback */\n@media (max-width: 900px) {\n\t:root {\n\t\t--container-width: 96vw;\n\t}\n\n\t#n8n-form,\n\t[class*=\"card\"] {\n\t\twidth: 96vw !important;\n\t\tpadding: 14px !important;\n\t}\n\n\ttextarea[name=\"job_description\"],\n\ttextarea[name=\"resume_latex\"] {\n\t\tmin-height: 160px !important;\n\t}\n}"
+        }
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.5,
+      "position": [
+        -16,
+        0
+      ],
+      "id": "b5a5089f-dd6c-44b9-8f82-56db30df7991",
+      "name": "Form Trigger",
+      "webhookId": "2ce26650-c3c9-45c6-a166-a3d6e88bdda4"
+    },
+    {
+      "parameters": {
+        "formTitle": "Resume PDF Generator",
+        "formDescription": "Paste your resume LaTeX and job description. This will generate a tailored resume PDF.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Company Name",
+              "fieldName": "company_name",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Role Title",
+              "fieldName": "role_title",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Resume LaTeX",
+              "fieldType": "textarea",
+              "fieldName": "resume_latex",
+              "defaultValue": "\\documentclass[letterpaper,10pt]{article}\n%%%%%%%%%%%%%%%%%%%%%%%\n%% BEGIN_FILE: mteck.sty\n%% NOTE: Everything between here and END_FILE can\n%% be relocated to \"mteck.sty\" and then included with:\n%\\usepackage{mteck}\n\n% Dependencies\n% NOTE: Some packages (lastpage, hyperref) require second build!\n\\usepackage[empty]{fullpage}\n\\usepackage{titlesec}\n\\usepackage{enumitem}\n\\usepackage[hidelinks]{hyperref}\n\\usepackage{fancyhdr}\n\\usepackage{fontawesome5}\n\\usepackage{multicol}\n\\usepackage{bookmark}\n\\usepackage{lastpage}\n\n% Sans-Serif\n%\\usepackage[sfdefault]{FiraSans}\n%\\usepackage[sfdefault]{roboto}\n%\\usepackage[sfdefault]{noto-sans}\n%\\usepackage[default]{sourcesanspro}\n\n% Serif\n\\usepackage{CormorantGaramond}\n\\usepackage{charter}\n\n% Colors\n% Use with \\color{Name}\n% Can wrap entire heading with {\\color{accent} [...] }\n\\usepackage{xcolor}\n\\definecolor{accentTitle}{HTML}{333333}\n\\definecolor{accentText}{HTML}{333333}\n\\definecolor{accentLine}{HTML}{D3D3D3}\n\n% Misc. Options\n\\pagestyle{fancy}\n\\fancyhf{}\n\\fancyfoot{}\n\\renewcommand{\\headrulewidth}{0pt}\n\\renewcommand{\\footrulewidth}{0pt}\n\\urlstyle{same}\n\n% Adjust Margins\n\\addtolength{\\oddsidemargin}{-0.7in}\n\\addtolength{\\evensidemargin}{-0.5in}\n\\addtolength{\\textwidth}{1.19in}\n\\addtolength{\\topmargin}{-0.7in}\n\\addtolength{\\textheight}{1.4in}\n\n\\setlength{\\multicolsep}{-3.0pt}\n\\setlength{\\columnsep}{-1pt}\n\\setlength{\\tabcolsep}{0pt}\n\\setlength{\\footskip}{3.7pt}\n\\raggedbottom\n\\raggedright\n\n% ATS Readability\n\\input{glyphtounicode}\n\\pdfgentounicode=1\n\n%-----------------%\n% Custom Commands %\n%-----------------%\n\n% Centered title along with subtitle between HR\n% Usage: \\documentTitle{Name}{Details}\n\\newcommand{\\documentTitle}[2]{\n  \\begin{center}\n    {\\Huge\\color{accentTitle} #1}\n    \\vspace{10pt}\n    {\\color{accentLine} \\hrule}\n    \\vspace{2pt}\n    %{\\footnotesize\\color{accentTitle} #2}\n    \\footnotesize{#2}\n    \\vspace{2pt}\n    {\\color{accentLine} \\hrule}\n  \\end{center}\n}\n\n% Create a footer with correct padding\n% Usage: \\documentFooter{\\thepage of X}\n\\newcommand{\\documentFooter}[1]{\n  \\setlength{\\footskip}{10.25pt}\n  \\fancyfoot[C]{\\footnotesize #1}\n}\n\n% Simple wrapper to set up page numbering\n% Usage: \\numberedPages\n% WARNING: Must run pdflatex twice!\n\\newcommand{\\numberedPages}{\n  \\documentFooter{\\thepage/\\pageref{LastPage}}\n}\n\n% Section heading with horizontal rule\n% Usage: \\section{Title}\n\\titleformat{\\section}{\n  \\vspace{-5pt}\n  \\color{accentText}\n  \\raggedright\\large\\bfseries\n}{}{0em}{}[\\color{accentLine}\\titlerule]\n\n% Section heading with separator and content on same line\n% Usage: \\tinysection{Title}\n\\newcommand{\\tinysection}[1]{\n  \\phantomsection\n  \\addcontentsline{toc}{section}{#1}\n  {\\large{\\bfseries\\color{accentText}#1} {\\color{accentLine} |}}\n}\n\n% Indented line with arguments left/right aligned in document\n% Usage: \\heading{Left}{Right}\n\\newcommand{\\heading}[2]{\n  \\hspace{10pt}#1\\hfill#2\\\\\n}\n\n% Adds \\textbf to \\heading\n\\newcommand{\\headingBf}[2]{\n  \\heading{\\textbf{#1}}{\\textbf{#2}}\n}\n\n% Adds \\textit to \\heading\n\\newcommand{\\headingIt}[2]{\n  \\heading{\\textit{#1}}{\\textit{#2}}\n}\n\n% Template for itemized lists\n% Usage: \\begin{resume_list} [items] \\end{resume_list}\n\\newenvironment{resume_list}{\n  \\vspace{-7pt}\n  \\begin{itemize}[itemsep=-2px, parsep=1pt, leftmargin=30pt]\n}{\n  \\end{itemize}\n  %\\vspace{-2pt}\n}\n\n% Formats an item to use as an itemized title\n% Usage: \\itemTitle{Title}\n\\newcommand{\\itemTitle}[1]{\n  \\item[] \\underline{#1}\\vspace{4pt}\n}\n\n% Bullets used in itemized lists\n\\renewcommand\\labelitemi{--}\n\n%% END_FILE: mteck.sty\n%%%%%%%%%%%%%%%%%%%%%%\n\n\n%===================%\n% John Doe's Resume %\n%===================%\n\n%\\numberedPages % NOTE: lastpage requires a second build\n%\\documentFooter{\\thepage of 2} % Does similar without using lastpage\n\\begin{document}\n\n  %---------%\n  % Heading %\n  %---------%\n\n  \\documentTitle{Jaydipsinh Padhiyar}{\n    % Web Version\n    %\\raisebox{-0.05\\height} \\faPhone\\ [redacted - web copy] ~\n    %\\raisebox{-0.15\\height} \\faEnvelope\\ [redacted - web copy] ~\n    %%\n    \\href{tel:7828826260}{\n      \\raisebox{-0.05\\height} \\faPhone\\ +1 782-882-6260} | \n    \\href{mailto:jaydipadhiyar27@gmail.com}{\n      \\raisebox{-0.15\\height} \\faEnvelope\\ jaydipadhiyar27@gmail.com} |\n    \\href{https://www.linkedin.com/in/jaydipsinh-padhiyar/}{\n      \\raisebox{-0.15\\height} \\faLinkedin\\ linkedin.com/in/jaydipsinh-padhiyar} | \n    \\href{https://github.com/JAYDIPSINH27}{\n      \\raisebox{-0.15\\height} \\faGithub\\ github.com/JAYDIPSINH27} |\n     \\href{https://jaydipsinh.netlify.app/}{\n      \\raisebox{-0.15\\height} \\faLink\\ Portfolio}\n  }\n\n  %---------%\n  % Summary %\n  %---------%\n\n\\section{Summary}\nFull-stack Software Developer with 2+ years of experience building \\textbf{scalable}, \\textbf{cloud-native applications}. Strong proficiency in \\textbf{Node.js}, \\textbf{Java}, \\textbf{Spring Boot}, and \\textbf{React}, with hands-on experience designing \\textbf{RESTful APIs}, integrating \\textbf{microservices}. Experienced in deploying and maintaining systems on \\textbf{AWS}, \\textbf{Azure}, and \\textbf{GCP}, with a strong focus on \\textbf{CI/CD}, Kubernetes, Agile.\n\n\n \n  %--------%\n  % Skills %\n  %--------%\n\n\\section{Skills}\n\n\\begin{multicols}{1}\n  \\begin{itemize}[itemsep=-2px, parsep=1pt, leftmargin=75pt]\n    \\item[\\textbf{Languages}] \\textbf{Java}, \\textbf{JavaScript}, \\textbf{TypeScript}, Python, SQL\n    \\item[\\textbf{Front-End}] \\textbf{React}, Redux, Next.js, HTML, CSS\n    \\item[\\textbf{Back-End}] \\textbf{Node.js}, \\textbf{Express.js}, \\textbf{Spring Boot}, Django\n    \\item[\\textbf{APIs}] \\textbf{REST}, OpenAPI, Swagger, GraphQL\n    \\item[\\textbf{Databases}] \\textbf{PostgreSQL}, \\textbf{MongoDB}, DynamoDB, MSSQL\n    \\item[\\textbf{Cloud}] \\textbf{AWS}, \\textbf{Azure}, \\textbf{GCP}\n    \\item[\\textbf{DevOps}] \\textbf{Docker}, \\textbf{Kubernetes}, CI/CD, Jenkins, Terraform\n    \\item[\\textbf{Testing}] \\textbf{JUnit}, Mockito, Jest, Cypress\n    \\item[\\textbf{Tools}] Git, GitHub, GitLab, Linux, Bash, Jira\n    \\item[\\textbf{Concepts}] \\textbf{Microservices}, \\textbf{Cloud-Native}, Agile, Performance Optimization, Security\n  \\end{itemize}\n\\end{multicols}\n\n\n  \n  %------------%\n  % Experience %\n  %------------%\n\n  \\section{Experience}\n\n\\headingBf{Intern Support Consultant}{Feb 2026 -- Present}  \n\\headingIt{Nova Scotia Health Authority}{}  \n\\begin{resume_list}\n\\item Built \\textbf{Excel \\& PowerBI dashboards} to track deployment, downtime planning, and metrics for the Health CIS rollout.\n\\item Analyzed operational datasets and generated \\textbf{data-driven reports} supporting Deployment \\& Operations planning.\n\\item Coordinated \\textbf{deployment schedules and readiness tracking} using structured planning sheets.\n\\item Collaborated with \\textbf{Command Centre, Support Centre, and At-The-Elbow teams} to maintain operational stability.\n\\item Contributed to development of \\textbf{Slow Down Survivor}, a \\textbf{Godot-based} strategy simulation used to model clinic readiness planning and operational decision-making.\n\\item Implemented \\textbf{game logic and UI components using GDScript}, representing clinic metrics such as Slow Down, Staff Training, Waitlist Capacity, and Morale.\n\\end{resume_list}\n\n\n\n\\headingBf{Software Developer}{Jan 2025 -- May 2025}  \n\\headingIt{Persuasive Computing Lab \\href{https://github.com/JAYDIPSINH27/BiasBreaker}{\\textcolor{blue}{\\small{\\faGithub}}}}{}  \n  \\begin{resume_list}\n    \\item Developed full-stack web application using \\textbf{Django REST APIs} and \\textbf{React/Redux}, implementing requirements analysis, design documentation, and comprehensive testing strategies.\n    \\item Participated in daily \\textbf{Agile stand-ups}, sprint planning, and peer \\textbf{code reviews}, collaborating with cross-functional team members to ensure code quality and project alignment.\n    \\item Designed and implemented \\textbf{RESTful APIs} for real-time data processing, quiz scoring, and content delivery with proper error handling and validation.\n    \\item Applied \\textbf{object-oriented design principles} and created UML diagrams for system architecture.\n    \\item Integrated third-party SDKs (Tobii Pro SDK, Hugging Face) and handled complex inter-system communication.\n  \\end{resume_list}\n\n\\headingBf{Software Developer Intern}{Jan 2023 -- Apr 2023}  \n\\headingIt{Bhaskaracharya National Institute for Space Applications and Geo-informatics \\href{https://drive.google.com/file/d/1ZSOdH_hylqyPQ_0Mw5SfJDFroob7JKct/view?usp=sharing}{\\textcolor{blue}{\\small{\\faLink}}} \\href{https://github.com/BISAG-N/Road-Surface-Quality-Investigation}{\\textcolor{blue}{\\small{\\faGithub}}}}{}  \n  \\begin{resume_list}\n    \\item Engineered a road surface quality investigation system using full-stack technologies (\\textbf{MERN}, \\textbf{Django}, OpenCV) following structured SDLC methodology.\n    \\item Collaborated with data scientists and engineers to integrate \\textbf{deep learning models} (FasterRCNN, SSD, RetinaNet), improving detection accuracy by 15\\% through iterative testing and optimization.\n    \\item Developed and optimized \\textbf{Python} data processing pipelines for large spatial datasets, reducing image retrieval time by 60\\% through multithreading and efficient algorithms.\n    \\item Participated in technical design reviews, presented progress to stakeholders, and documented software documents.\n    \\item Utilized \\textbf{Jira} for task tracking, reported blockers in daily stand-ups, and aligned deliverables with project milestones.\n    \\item Performed comprehensive software testing including unit tests, integration tests, and validation of fixes.\n  \\end{resume_list}\n\n\\headingBf{Software Developer Trainee}{Jul 2021 -- Nov 2021}  \n\\headingIt{CHARUSAT University \\href{https://drive.google.com/file/d/1lRxrKSH9eOEC-s-tBNP8qNhqH5VE6cK0/view?usp=sharing}{\\textcolor{blue}{\\small{\\faLink}}} \\href{https://github.com/Infikey-Technologies-Internship/InstituteManagementPortal}{\\textcolor{blue}{\\small{\\faGithub}}}}{}  \n  \\begin{resume_list}\n    \\item Developed and deployed an Institute Management Portal on \\textbf{Azure App Services} following \\textbf{cloud-native architecture}.\n    \\item Implemented \\textbf{RESTful APIs} using best practices for scalability, security, and maintainability.\n    \\item Integrated \\textbf{Azure CosmosDB} for data management, designing schema and optimizing queries for performance.\n    \\item Applied \\textbf{CI/CD concepts} and cloud deployment strategies through structured mentorship and hands-on experience.\n    \\item Participated in code reviews, technical documentation, and knowledge-sharing sessions with team members.\n  \\end{resume_list}\n\n\\newpage\n\\headingBf{Full Stack Developer Intern}{May 2021 -- Jul 2021}  \n\\headingIt{CHARUSAT University \\href{https://drive.google.com/file/d/1Ej3lp81SUVch07Icw5CER24K16UwHV8l/view?usp=sharing}{\\textcolor{blue}{\\small{\\faLink}}}}{}  \n  \\begin{resume_list}\n    \\item Developed inventory management system with requirements gathering, design, implementation, and testing phases.\n    \\item Designed \\textbf{MySQL} database schema with normalized tables, optimized CRUD operations, and complex queries.\n    \\item Performed software requirements analysis and created technical documentation including design specifications.\n    \\item Increased operational accuracy by 15\\% through improved tracking functionality and automated processes.\n  \\end{resume_list}\n\n\n  %-----------%\n  % Education %\n  %-----------%\n\n  \\section{Education}\n\n  \\headingBf{Dalhousie University}{Jan 2024 - May 2025}\n  \\headingIt{Masters in Applied Computer Science}{ 3.94/4.3 GPA}\n  \\headingIt{courses: Advanced Concepts of Software Development, Advanced Web Development, Data Management, Warehousing \\& Analytics }{}\n\n\\vspace{10pt}\n\\headingBf{CHARUSAT University}{Jun 2019 - Apr 2023}\n  \\headingIt{Bachelors of Technology in Computer Engineering}{ 4.0/4.3 GPA}\n  \\headingIt{courses: Data Structures,\nAnalysis of Algorithms, Computer Networking, Artificial Intelligence, Databases, Theory of Computation }{}\n\\headingIt{Operating Systems, Software Engineering, Digital Image Processing, Design of Language Processor}{}\n\n\n  %----------------------------%\n  % Projects %\n  %----------------------------%\n\n  \\section{Projects}\n\n\n\\headingBf{Les Chat Aws}{(AWS, EC2, VPC, RDS, CloudWatch, SNS, Elastic Load Balancing, GraphQL) \\href{https://github.com/JAYDIPSINH27/les-chat-aws}{\\textcolor{blue}{\\small{\\faLink}}}}  \n% \\headingIt{}{}  \n\\begin{resume_list}\n  \\item Designed a scalable, multi-tier AWS infrastructure using \\textbf{CloudFormation} to ensure high availability and resilience.\n  \\item Implemented auto-scaling and self-healing cloud infrastructure for optimized resource utilization.\n  \\item Developed a secure \\textbf{RDS PostgreSQL} database with multi-AZ deployment for fault tolerance.\n  \\item Deployed containerized applications using \\textbf{Docker} to enable efficient cloud deployments.\n  \\item Configured comprehensive monitoring with \\textbf{AWS CloudWatch} and set real-time alerts.\n  \\item Ensured high availability with a fault-tolerant network architecture using VPC, private subnets, and NAT Gateway.\n  \\item Automated deployments with scripts using infrastructure-as-code approach.\n\\end{resume_list}\n\n\\headingBf{DalVacationHome}{(ReactJS, NodeJS, Python, AWS, GCP, Docker, DynamoDB) \\href{https://github.com/JAYDIPSINH27/DalVacationHome}{\\textcolor{blue}{\\small{\\faLink}}}}  \n% \\headingIt{}{}  \n\\begin{resume_list}\n  \\item Architected and deployed a multi-cloud booking app on \\textbf{AWS} and \\textbf{Google Cloud}, ensuring scalability and uptime.\n  \\item Designed an Amazon Lex Chatbot with \\textbf{AWS Lambda}-based booking logic for enhanced user interaction.\n  \\item Implemented an ETL process using \\textbf{BigQuery and Google Natural Language API} for sentiment analysis.\n  \\item Automated deployments via GitLab CI/CD, implementing Infrastructure as Code with \\textbf{CloudFormation}.\n  % \\item Automated deployments via GitLab CI/CD, implementing Infrastructure as Code with \\textbf{CloudFormation} and managing Jira board.\n  \\item Created booking and notifications using AWS SNS, SQS, and GCP Pub/Sub for real-time communication.\n  % \\item Architected an asynchronous user-agent chat using GCP Pub/Sub for seamless ticket generation and support.\n\\end{resume_list}\n\n\\headingBf{FurrEverHome}{(SpringBoot, ReactJS, MySQL, Maven, Junit, Docker) \\href{https://github.com/JAYDIPSINH27/FurrEverHome}{\\textcolor{blue}{\\small{\\faLink}}}}  \n% \\headingIt{}{}  \n\\begin{resume_list}\n  \\item Created a \\textbf{CI/CD pipeline} with Docker and GitLab, reducing build and deployment times by 60\\%.\n  \\item Applied \\textbf{Test Driven Development (TDD)} using JUnit to achieve 80\\% code coverage with Code quality gate.\n  \\item Followed a structured \\textbf{SDLC} approach from planning to deployment to meet all requirements.\n  % \\item Served as Scrum Master and followed Agile methodologies using GitLab boards.\n  \\item Deployed the application on a university VM ensuring secure, scalable operations with 99.9\\% uptime.\n  % \\item Integrated GetStream.io's chat APIs for communication between adopters and shelters.\n\\end{resume_list}\n\n% \\headingBf{BidSphere}\n% {(MongoDB, AWS, ReactJS, NodeJS, ExpressJS, SpringBoot, Microservice, Stripe) \\href{https://github.com/JAYDIPSINH27/BidSphere}{\\textcolor{blue}{\\small{\\faLink}}}}{}  \n% \\begin{resume_list}\n%   \\item Architected a \\textbf{microservices} backend using NodeJS and Spring Boot, enhancing performance and collaboration.\n%   \\item Developed a document and tender management module using \\textbf{Spring Boot} and AWS S3 for secure storage.\n%   \\item Integrated Stripe's payment gateway into Node.js microservices for secure transaction processing.\n%   \\item Designed a landing page with Framer Motion's AnimatePresence, optimizing DOM manipulation for faster loads.\n%   % \\item Applied Atomic Design in ReactJS to build over 20 reusable UI components, reducing development time.\n%   \\item Managed tender, bid, and user data using MongoDB to improve query performance.\n% \\end{resume_list}\n\n\n\\headingBf{K8s Microservice}{(GCP, Terraform, NodeJS, ExpressJS, Microservice, Kubernetes) \\href{https://github.com/JAYDIPSINH27/k8s-microservice}{\\textcolor{blue}{\\small{\\faLink}}}}  \n% \\headingIt{}{}  \n\\begin{resume_list}\n  \\item Developed a CI/CD pipeline using Google Cloud Build, automating deployments to Google Kubernetes Engine (\\textbf{GKE}).\n  \\item Configured a \\textbf{persistent volume} and designed RESTful APIs for effective inter-service communication.\n  \\item Automated GKE cluster provisioning using \\textbf{Terraform} to optimize infrastructure setup.\n  \\item Developed microservices using Node.js and Express.js to facilitate RESTful API communication between containers.\n  % \\item Containerized applications with Docker to ensure scalability and efficient resource management on GCP.\n  \\item Configured Kubernetes YAML files to manage container orchestration and service exposure.\n\\end{resume_list}\n\n\\headingBf{SOFABoot \\textendash{} Open Source Contribution (Merged PR)}{(Java, JUnit~5, Mockito, Spring Boot/SOFABoot) \\href{https://github.com/JAYDIPSINH27/sofa-boot/pull/1/commits}{\\textcolor{blue}{\\small{\\faLink}}}}\n\\begin{resume_list}\n  \\item Authored unit tests for core components (\\texttt{startup/StartupReporter}, \\texttt{compatibility/VerificationResultTests}, \\texttt{util/SofaBootEnvUtilsTests}) to harden startup metrics, compatibility checks, and environment utilities.\n  \\item Documented coverage in the PR (images), showing clear increases in line and branch coverage for the touched modules.\n  \\item Expanded edge-case validation for startup reporting, verification outcomes (success/failure states), and environment variable resolution to ensure deterministic behavior.\n  \\item Adopted \\textbf{JUnit~5} + \\textbf{Mockito} patterns for isolated, fast tests with concise assertions and clear failure messages.\n  \\item PR merged into the upstream \\textbf{SOFABoot} codebase as an open-source contribution.\n\\end{resume_list}\n\n\n%--------%\n% Certifications & Contributions %\n%--------%\n\\section{Certifications \\& Contributions}\n\n\\begin{itemize}[itemsep=-2px, parsep=1pt, leftmargin=75pt]\n  \\item[\\textbf{Award}] Received cash prize and certificate of merit for \\textbf{1st rank} in the first semester.\n  \\item[\\textbf{Scholarship}] Received MYSY Scholarship throughout the bachelor's degree for scoring above 80\\% in Grade 12.\n  \\item[\\textbf{NPTEL/IITM}] Elite in ``Design and Analysis of Algorithms'' and ``Introduction to Operating Systems''. \\href{https://drive.google.com/file/d/1EarEPuC-vlEy10xRMF0RTcF661rec1FU/view?usp=share_link}{\\textcolor{blue}{\\small{\\faLink}}}\n  \\item[\\textbf{Google}] Foundation of Project Management (Coursera); Agile methodologies. \\href{https://www.coursera.org/account/accomplishments/verify/UQHDN5XHHKH4}{\\textcolor{blue}{\\small{\\faLink}}}\n  \\item[\\textbf{Oracle}] Oracle Cloud Infrastructure Associate. \\href{https://drive.google.com/file/d/1KJZwxxNAg2cJVqnk1L-Oh0vTQJRwBZq8/view?usp=sharing}{\\textcolor{blue}{\\small{\\faLink}}}\n\\end{itemize}\n\n% %---------------------------%\n% % Extracurricular Activities %\n% %---------------------------%\n% \\section{Extracurricular Activities}\n\n% \\begin{itemize}[itemsep=-2px, parsep=1pt, leftmargin=75pt]\n%   \\item[\\textbf{Workshop}] Led a two-day Node.js workshop for over 50 students, strengthening server-side development skills. \\href{https://drive.google.com/file/d/1nB99-cLJtYwV9K-Dku-XSsdT-_4ne3Xi/view?usp=share_link}{\\textcolor{blue}{\\small{\\faLink}}}\n%   \\item[\\textbf{Organizer}] Coordinated ``CodePie,'' a competitive coding event driving campus-wide engagement. \\href{https://drive.google.com/file/d/1tpws88NVZNmON7CDDcE3JpvpxAvUKLJk/view?usp=share_link}{\\textcolor{blue}{\\small{\\faLink}}}\n%   \\item[\\textbf{Expert (Chegg)}] Solved computer science problems and answered student questions on Chegg as a Subject Matter Expert, providing clear, step-by-step explanations in algorithms, data structures, and programming.\n% \\end{itemize}\n\n\n\n\n\n\\end{document}",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Job Description",
+              "fieldType": "textarea",
+              "fieldName": "job_description",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Extra Notes",
+              "fieldType": "textarea",
+              "fieldName": "extra_notes"
+            }
+          ]
+        },
+        "options": {
+          "customCss": ":root {\n\t--font-family: 'Open Sans', sans-serif;\n\t--font-weight-normal: 400;\n\t--font-weight-bold: 600;\n\t--font-size-body: 12px;\n\t--font-size-label: 13px;\n\t--font-size-test-notice: 11px;\n\t--font-size-input: 13px;\n\t--font-size-header: 20px;\n\t--font-size-paragraph: 13px;\n\t--font-size-link: 12px;\n\t--font-size-error: 12px;\n\t--font-size-subheader: 13px;\n\n\t--color-background: #fbfcfe;\n\t--color-test-notice-text: #e6a23d;\n\t--color-test-notice-bg: #fefaf6;\n\t--color-test-notice-border: #f6dcb7;\n\t--color-card-bg: #ffffff;\n\t--color-card-border: #dbdfe7;\n\t--color-card-shadow: rgba(99, 77, 255, 0.06);\n\t--color-header: #3f3f46;\n\t--color-label: #444444;\n\t--color-input-border: #dbdfe7;\n\t--color-input-text: #36383d;\n\t--color-focus-border: rgb(90, 76, 194);\n\t--color-submit-btn-bg: #ff6d5a;\n\t--color-submit-btn-text: #ffffff;\n\t--color-required: #ff6d5a;\n\n\t--border-radius-card: 10px;\n\t--border-radius-input: 6px;\n\t--card-border-radius: 10px;\n\n\t--padding-container-top: 8px;\n\t--padding-card: 16px;\n\t--padding-test-notice-vertical: 8px;\n\t--padding-test-notice-horizontal: 16px;\n\t--margin-bottom-card: 8px;\n\t--padding-form-input: 8px;\n\t--card-padding: 16px;\n\t--card-margin-bottom: 8px;\n\n\t/* Make form wide */\n\t--container-width: min(96vw, 1500px);\n\n\t--submit-btn-height: 42px;\n\t--box-shadow-card: 0px 4px 16px 0px var(--color-card-shadow);\n}\n\n/* Full page */\nhtml,\nbody {\n\twidth: 100% !important;\n\tmin-height: 100vh !important;\n\tmargin: 0 !important;\n\tpadding: 0 !important;\n\toverflow-x: hidden !important;\n\tbackground: var(--color-background) !important;\n}\n\n/* Make all containers wide */\nbody > div,\nmain,\n.container,\n[class*=\"container\"] {\n\tmax-width: 1500px !important;\n\twidth: 96vw !important;\n}\n\n/* Main card */\n#n8n-form,\n[class*=\"card\"] {\n\tmax-width: 1500px !important;\n\twidth: 96vw !important;\n\tmargin: 8px auto !important;\n\tpadding: 16px 20px !important;\n\tbox-sizing: border-box !important;\n}\n\n/* Smaller title area */\nh1 {\n\tfont-size: 20px !important;\n\tmargin: 0 0 4px 0 !important;\n}\n\np {\n\tfont-size: 13px !important;\n\tline-height: 1.3 !important;\n\tmargin: 0 0 8px 0 !important;\n}\n\n/* Labels */\nlabel {\n\tfont-size: 13px !important;\n\tmargin-bottom: 3px !important;\n\tfont-weight: 600 !important;\n}\n\n/* Inputs */\ninput,\ntextarea,\nselect {\n\twidth: 100% !important;\n\tbox-sizing: border-box !important;\n\tfont-size: 13px !important;\n\tpadding: 8px 10px !important;\n\tborder-radius: 6px !important;\n}\n\n/* Make fields compact */\ntextarea {\n\tmin-height: 90px !important;\n\tmax-height: 180px !important;\n\tresize: vertical !important;\n\tfont-family: Consolas, \"Courier New\", monospace !important;\n\tfont-size: 12px !important;\n\tline-height: 1.25 !important;\n}\n\n/* Bigger boxes, but still one-page friendly */\ntextarea[name=\"job_description\"],\ntextarea[name=\"resume_latex\"] {\n\tmin-height: 190px !important;\n\tmax-height: 230px !important;\n}\n\ntextarea[name=\"custom_prompt\"],\ntextarea[name=\"extra_notes\"] {\n\tmin-height: 105px !important;\n\tmax-height: 140px !important;\n}\n\n/* Reduce field spacing */\nform div,\n[class*=\"form\"] div {\n\tmargin-bottom: 6px !important;\n}\n\n/* Submit button compact */\nbutton,\nbutton[type=\"submit\"] {\n\theight: 42px !important;\n\tmin-height: 42px !important;\n\tpadding: 8px 16px !important;\n\tfont-size: 14px !important;\n\tfont-weight: 700 !important;\n\twidth: 100% !important;\n\tmargin-top: 6px !important;\n}\n\n/* Test notice compact */\n[class*=\"test\"],\n[class*=\"notice\"] {\n\tmax-width: 1500px !important;\n\twidth: 96vw !important;\n\tmargin: 8px auto !important;\n\tpadding: 8px 14px !important;\n\tfont-size: 11px !important;\n\tbox-sizing: border-box !important;\n}\n\n/* Hide extra whitespace if n8n adds wrappers */\nbr {\n\tdisplay: none !important;\n}\n\n/* Mobile fallback */\n@media (max-width: 900px) {\n\t:root {\n\t\t--container-width: 96vw;\n\t}\n\n\t#n8n-form,\n\t[class*=\"card\"] {\n\t\twidth: 96vw !important;\n\t\tpadding: 14px !important;\n\t}\n\n\ttextarea[name=\"job_description\"],\n\ttextarea[name=\"resume_latex\"] {\n\t\tmin-height: 160px !important;\n\t}\n}"
+        }
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.5,
+      "position": [
+        -16,
+        224
+      ],
+      "id": "8864c093-87ee-4286-9d7b-b86588bf0254",
+      "name": "Resume",
+      "webhookId": "de40b656-9339-454a-b0b8-fd6b46f12091"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nconst resumeLatex = input.resume_latex || \"\";\nconst jobDescription = input.job_description || \"\";\nconst companyName = input.company_name || \"\";\nconst roleTitle = input.role_title || \"\";\nconst extraNotes = input.extra_notes || \"\";\n\nif (!resumeLatex) {\n  throw new Error(\"No resume_latex found from Resume form.\");\n}\n\nif (!jobDescription) {\n  throw new Error(\"No job_description found from Resume form.\");\n}\n\n// -----------------------------\n// Helpers\n// -----------------------------\nfunction normalize(value) {\n  return String(value || \"\")\n    .replace(/\\\\href\\{[^{}]*\\}\\{([^{}]*)\\}/g, \"$1\")\n    .replace(/\\\\textcolor\\{[^{}]*\\}\\{([^{}]*)\\}/g, \"$1\")\n    .replace(/\\\\textbf\\{([^{}]*)\\}/g, \"$1\")\n    .replace(/\\\\textit\\{([^{}]*)\\}/g, \"$1\")\n    .replace(/\\\\texttt\\{([^{}]*)\\}/g, \"$1\")\n    .replace(/\\\\small\\{([^{}]*)\\}/g, \"$1\")\n    .replace(/[{}\\\\]/g, \"\")\n    .replace(/\\s+/g, \" \")\n    .trim();\n}\n\nfunction escapeRegex(value) {\n  return String(value || \"\").replace(/[.*+?^${}()|[\\]\\\\]/g, \"\\\\$&\");\n}\n\nfunction extractBlockBetweenSections(latex, startSection, endRegex) {\n  const startRegex = new RegExp(`\\\\\\\\section\\\\{${escapeRegex(startSection)}\\\\}`, \"i\");\n  const startMatch = latex.match(startRegex);\n  if (!startMatch) return \"\";\n  const afterStart = latex.slice(startMatch.index + startMatch[0].length);\n  const endMatch = afterStart.match(endRegex);\n  const endIndex = endMatch ? endMatch.index : afterStart.length;\n  return afterStart.slice(0, endIndex);\n}\n\nfunction extractSectionEntries(block, type) {\n  const entries = [];\n  const headingRegex = /\\\\headingBf\\{([^{}]+)\\}(?:\\{([^{}]*)\\})?/g;\n  const matches = [...block.matchAll(headingRegex)];\n\n  for (let i = 0; i < matches.length; i++) {\n    const current = matches[i];\n    const next = matches[i + 1];\n    const heading = normalize(current[1]);\n    const startIndex = current.index;\n    const endIndex = next ? next.index : block.length;\n    const sectionLatex = block.slice(startIndex, endIndex);\n\n    const bullets = [];\n    const bulletRegex = /\\\\item\\s+([\\s\\S]*?)(?=\\n\\s*\\\\item|\\n\\s*\\\\end\\{resume_list\\}|\\n\\s*\\\\headingBf|\\n\\s*\\\\section|$)/g;\n\n    let bulletMatch;\n    while ((bulletMatch = bulletRegex.exec(sectionLatex)) !== null) {\n      const rawBullet = String(bulletMatch[1] || \"\");\n      if (rawBullet.trim().startsWith(\"%\")) continue;\n      const bullet = normalize(rawBullet);\n      if (bullet) bullets.push(bullet);\n    }\n\n    if (heading && bullets.length) {\n      entries.push({\n        section: heading,\n        type,\n        bullets: bullets.slice(0, 5)\n      });\n    }\n  }\n\n  return entries;\n}\n\nfunction keywordSet(value) {\n  const stopWords = new Set([\n    \"the\", \"and\", \"for\", \"with\", \"you\", \"your\", \"our\", \"are\", \"this\", \"that\",\n    \"from\", \"will\", \"work\", \"role\", \"team\", \"have\", \"has\", \"using\", \"used\",\n    \"into\", \"about\", \"their\", \"they\", \"them\", \"what\", \"where\", \"when\"\n  ]);\n  return new Set(\n    normalize(value)\n      .toLowerCase()\n      .split(/[^a-z0-9+#.]+/)\n      .map((word) => word.trim())\n      .filter((word) => word.length >= 3 && !stopWords.has(word))\n  );\n}\n\nfunction scoreSection(section, jdSet) {\n  const sectionText = `${section.section} ${section.type} ${section.bullets.join(\" \")}`;\n  const sectionSet = keywordSet(sectionText);\n  let score = 0;\n  for (const word of sectionSet) {\n    if (jdSet.has(word)) score += 1;\n  }\n  const text = sectionText.toLowerCase();\n  const boostWords = [\n    \"react\", \"typescript\", \"javascript\", \"node\", \"express\", \"rest\", \"api\", \"apis\",\n    \"postgresql\", \"sql\", \"azure\", \"gcp\", \"aws\", \"docker\", \"kubernetes\", \"terraform\",\n    \"cloud\", \"microservices\", \"data\", \"pipeline\", \"testing\", \"deployment\", \"ci/cd\",\n    \"full-stack\", \"backend\"\n  ];\n  for (const word of boostWords) {\n    if (text.includes(word)) score += 2;\n  }\n  return score;\n}\n\n// -----------------------------\n// Extract Experience and Projects\n// -----------------------------\nconst experienceBlock = extractBlockBetweenSections(\n  resumeLatex,\n  \"Experience\",\n  /\\\\section\\{Education\\}|\\\\section\\{Projects\\}|\\\\section\\{Skills\\}|\\\\section\\{Certifications\\}|\\\\end\\{document\\}/i\n);\n\nconst projectsBlock = extractBlockBetweenSections(\n  resumeLatex,\n  \"Projects\",\n  /\\\\section\\{Certifications\\s*\\\\&\\s*Contributions\\}|\\\\section\\{Certifications\\}|\\\\section\\{Education\\}|\\\\section\\{Skills\\}|\\\\end\\{document\\}/i\n);\n\nconst experienceSections = extractSectionEntries(experienceBlock, \"experience\");\nconst projectSections = extractSectionEntries(projectsBlock, \"project\");\n\nlet targetSections = [...experienceSections, ...projectSections];\n\nif (!targetSections.length) {\n  throw new Error(\"Could not extract Experience or Project sections from resume LaTeX.\");\n}\n\n// -----------------------------\n// Select only top relevant sections\n// -----------------------------\nconst jdSet = keywordSet(jobDescription);\n\ntargetSections = targetSections\n  .map((section) => ({\n    ...section,\n    relevance_score: scoreSection(section, jdSet)\n  }))\n  .sort((a, b) => b.relevance_score - a.relevance_score)\n  .slice(0, 4);\n\nconst targetSectionText = targetSections\n  .map((item, index) => {\n    const bulletText = item.bullets\n      .map((bullet, bulletIndex) => `${bulletIndex + 1}. ${bullet}`)\n      .join(\"\\n\");\n    return `${index + 1}. ${item.section} (${item.type})\\n${bulletText}`;\n  })\n  .join(\"\\n\\n\");\n\n// FIX 1: Increased JD limit from 2800 → 1800 to keep total prompt \n// well under context window and leave room for output tokens\nconst safeJobDescription = String(jobDescription).slice(0, 1800);\nconst safeExtraNotes = String(extraNotes).slice(0, 500);\n\nconst prompt = `You are tailoring a resume to a job description.\n\nReturn ONLY one valid JSON object. No markdown. No explanations. No LaTeX. No code fences. Nothing before or after the JSON.\n\nThe JSON must have EXACTLY these keys:\n{ \"summary\": \"\", \"bold_keywords\": [], \"sections\": [] }\n\nCOMPANY: ${companyName}\nROLE: ${roleTitle}\n\nJOB DESCRIPTION:\n${safeJobDescription}\n\nEXTRA NOTES:\n${safeExtraNotes}\n\nTARGET SECTIONS:\n${targetSectionText}\n\nTASK: For each target section add exactly 1 new bullet and comment out exactly 1 existing bullet.\n- old_text must exactly match an existing bullet from that section.\n- Do not invent experience, tools, metrics, or achievements.\n- New bullets must be under 26 words, no LaTeX, no \\\\item.\n\nJSON shape:\n{\n  \"summary\": \"Short summary of tailoring.\",\n  \"bold_keywords\": [\"keyword1\",\"keyword2\"],\n  \"sections\": [\n    {\n      \"section\": \"Exact section heading\",\n      \"type\": \"experience\",\n      \"add_points\": [\"New bullet\"],\n      \"comment_out\": [{ \"old_text\": \"Exact existing bullet\", \"reason\": \"Why removed\" }]\n    }\n  ]\n}\n\nRULES:\n- JSON only. All 4 sections required. Exactly 1 add_points and 1 comment_out per section.\n- bold_keywords: 8–15 short keywords from JD or resume.\n- Prefer Azure, TypeScript, PostgreSQL, Docker, microservices, REST API, CI/CD keywords.`;\n\nreturn [\n  {\n    json: {\n      resume_latex: resumeLatex,\n      job_description: jobDescription,\n      company_name: companyName,\n      role_title: roleTitle,\n      extra_notes: extraNotes,\n      target_sections: targetSections,\n      ollama_body: {\n        model: \"gemma3:latest\",\n        messages: [\n          {\n            role: \"user\",\n            content: prompt\n          }\n        ],\n        stream: false,\n        // FIX 2: Increased from 1100 → 2000 so JSON output isn't cut off mid-way\n        // 4 sections × ~120 tokens each + summary + keywords ≈ 700–900 tokens minimum\n        options: {\n          temperature: 0.12,\n          num_predict: 2000,\n          top_p: 0.7,\n          repeat_penalty: 1.22,\n          num_ctx: 8192\n        }\n      }\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        224
+      ],
+      "id": "c7463530-0fb9-4eb4-b3bd-99cb2c700a12",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:11434/api/chat",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{$json.ollama_body}}",
+        "options": {
+          "timeout": 6000000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        432,
+        224
+      ],
+      "id": "bea9ceeb-5735-47c0-b0b8-99aa5d801d2e",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "command": "=mkdir -p \"{{ $('Merge Resume Suggestions').first().json.work_dir }}\"\n\necho \"{{ $('Merge Resume Suggestions').first().json.resume_base64 }}\" | base64 -d > \"{{ $('Merge Resume Suggestions').first().json.tex_path }}\"\n\necho \"{{ $('Merge Resume Suggestions').first().json.change_log_base64 }}\" | base64 -d > \"{{ $('Merge Resume Suggestions').first().json.log_path }}\"\n\ncd \"{{ $('Merge Resume Suggestions').first().json.work_dir }}\"\n\necho \"WORK DIR:\"\npwd\n\necho \"TEX FILE:\"\nls -lh \"{{ $('Merge Resume Suggestions').first().json.tex_file_name }}\"\n\necho \"CHECKING BOLD:\"\ngrep -n \"textbf\" \"{{ $('Merge Resume Suggestions').first().json.tex_file_name }}\" | head -50 || true\n\necho \"CHECKING COMMENTED OLD POINTS:\"\ngrep -n \"OLD:\" \"{{ $('Merge Resume Suggestions').first().json.tex_file_name }}\" | head -80 || true\n\necho \"CHECKING CHANGE LOG:\"\ncat \"{{ $('Merge Resume Suggestions').first().json.log_file_name }}\" | head -150 || true\n\necho \"REMOVING OLD PDF:\"\nrm -f \"{{ $('Merge Resume Suggestions').first().json.pdf_file_name }}\"\n\necho \"COMPILING WITH PDFLATEX:\"\npdflatex -interaction=nonstopmode -halt-on-error \"{{ $('Merge Resume Suggestions').first().json.tex_file_name }}\"\npdflatex -interaction=nonstopmode -halt-on-error \"{{ $('Merge Resume Suggestions').first().json.tex_file_name }}\"\n\necho \"FINAL PDF:\"\nls -lh \"{{ $('Merge Resume Suggestions').first().json.pdf_file_name }}\""
+      },
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        880,
+        224
+      ],
+      "id": "23463c1c-08a4-4f35-b3b2-20cc43352da4",
+      "name": "Execute Command1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const rawJson = $input.first().json;\nconst formData = $(\"Resume\").first().json;\n\nconst originalResume = formData.resume_latex || rawJson.resume_latex || \"\";\n\nif (!originalResume) {\n  throw new Error(\"No resume_latex found from Resume form.\");\n}\n\n// ─────────────────────────────────────────\n// 1. Parse Ollama response\n// ─────────────────────────────────────────\nlet responseText =\n  rawJson.message?.content ||\n  rawJson.response ||\n  rawJson.text ||\n  rawJson.output ||\n  rawJson.content ||\n  \"\";\n\nif (typeof responseText === \"object\") {\n  responseText = JSON.stringify(responseText);\n}\n\nif (!responseText) {\n  throw new Error(\"No Ollama response found. Keys: \" + Object.keys(rawJson).join(\", \"));\n}\n\nresponseText = String(responseText)\n  .replace(/```json/gi, \"\")\n  .replace(/```latex/gi, \"\")\n  .replace(/```tex/gi, \"\")\n  .replace(/```/g, \"\")\n  .trim();\n\nconst jsonStart = responseText.indexOf(\"{\");\nconst jsonEnd = responseText.lastIndexOf(\"}\");\n\nif (jsonStart === -1 || jsonEnd === -1 || jsonEnd <= jsonStart) {\n  throw new Error(\"Ollama did not return valid JSON. Got: \" + responseText.slice(0, 300));\n}\n\nlet edits;\ntry {\n  edits = JSON.parse(responseText.slice(jsonStart, jsonEnd + 1));\n} catch (err) {\n  throw new Error(\"JSON parse failed: \" + err.message + \"\\nRaw: \" + responseText.slice(0, 400));\n}\n\nif (edits.suggestions && !edits.sections) edits = edits.suggestions;\n\nif (!Array.isArray(edits.sections)) {\n  throw new Error(\"Ollama JSON missing sections array.\");\n}\n\n// Normalize sections\nedits.sections = edits.sections\n  .filter((s) => s && s.section)\n  .slice(0, 4)\n  .map((s) => ({\n    section: String(s.section || \"\").trim(),\n    type: s.type === \"project\" ? \"project\" : \"experience\",\n    add_points: Array.isArray(s.add_points)\n      ? s.add_points.slice(0, 1).map((p) => String(p || \"\").trim()).filter(Boolean)\n      : [],\n    comment_out: Array.isArray(s.comment_out)\n      ? s.comment_out.slice(0, 1).map((item) => ({\n          old_text: String(item?.old_text || \"\").trim(),\n          reason: String(item?.reason || \"Less relevant to this role\").trim()\n        }))\n      : []\n  }))\n  .filter((s) => s.add_points.length > 0 && s.comment_out.length > 0);\n\nif (!edits.sections.length) {\n  throw new Error(\"No usable sections after normalization. Raw edits: \" + JSON.stringify(edits));\n}\n\n// ─────────────────────────────────────────\n// 2. Helpers\n// ─────────────────────────────────────────\nfunction slugify(value) {\n  return String(value || \"\")\n    .trim().toLowerCase()\n    .replace(/&/g, \"and\")\n    .replace(/[^a-z0-9]+/g, \"_\")\n    .replace(/^_+|_+$/g, \"\")\n    .slice(0, 70);\n}\n\nfunction escapeRegex(str) {\n  return String(str || \"\").replace(/[.*+?^${}()|[\\]\\\\]/g, \"\\\\$&\");\n}\n\nfunction ensurePeriod(text) {\n  const t = String(text || \"\").trim();\n  return t && !/[.!?]$/.test(t) ? t + \".\" : t;\n}\n\nfunction escapeLatexText(text) {\n  return String(text || \"\")\n    .replace(/\\\\/g, \"\\\\textbackslash{}\")\n    .replace(/&/g, \"\\\\&\")\n    .replace(/%/g, \"\\\\%\")\n    .replace(/#/g, \"\\\\#\")\n    .replace(/_/g, \"\\\\_\")\n    .replace(/\\$/g, \"\\\\$\")\n    .replace(/\\{/g, \"\\\\{\")\n    .replace(/\\}/g, \"\\\\}\")\n    .replace(/~/g, \"\\\\textasciitilde{}\")\n    .replace(/\\^/g, \"\\\\textasciicircum{}\");\n}\n\n// Strip ALL LaTeX and punctuation down to plain comparable words\nfunction stripLatex(text) {\n  return String(text || \"\")\n    .replace(/\\\\href\\{[^{}]*\\}\\{([^{}]*)\\}/g, \"$1\")\n    .replace(/\\\\textcolor\\{[^{}]*\\}\\{([^{}]*)\\}/g, \"$1\")\n    .replace(/\\\\textbf\\{([^{}]*)\\}/g, \"$1\")\n    .replace(/\\\\textit\\{([^{}]*)\\}/g, \"$1\")\n    .replace(/\\\\texttt\\{([^{}]*)\\}/g, \"$1\")\n    .replace(/\\\\small\\{([^{}]*)\\}/g, \"$1\")\n    .replace(/\\\\item\\s*/gi, \"\")\n    .replace(/[{}\\\\]/g, \"\")\n    .replace(/[\"\"]/g, '\"')\n    .replace(/['']/g, \"'\")\n    .replace(/\\s+/g, \" \")\n    .trim()\n    .toLowerCase();\n}\n\nfunction wordOverlapScore(a, b) {\n  const wordsOf = (str) =>\n    new Set(str.split(/\\s+/).filter((w) => w.length >= 4));\n  const setA = wordsOf(stripLatex(a));\n  const setB = wordsOf(stripLatex(b));\n  if (!setA.size || !setB.size) return 0;\n  let common = 0;\n  for (const w of setA) if (setB.has(w)) common++;\n  return common / Math.min(setA.size, setB.size);\n}\n\n// ─────────────────────────────────────────\n// 3. Section + bullet finding (FIXED)\n// ─────────────────────────────────────────\n\n// FIX: Match headingBf lines by checking if the FIRST arg contains the target name\n// Your LaTeX: \\headingBf{K8s Microservice}{(GCP, Terraform...)}\n// Previous code tried to match full normalized line — this was the root bug\nfunction findSectionLineIndex(lines, sectionName) {\n  const target = stripLatex(sectionName);\n  if (!target) return -1;\n\n  for (let i = 0; i < lines.length; i++) {\n    const line = lines[i];\n    if (!line.includes(\"\\\\headingBf\")) continue;\n\n    // Extract just the first argument of \\headingBf{...}{...}\n    const firstArgMatch = line.match(/\\\\headingBf\\{([^{}]+)\\}/);\n    if (!firstArgMatch) continue;\n\n    const firstArg = stripLatex(firstArgMatch[1]);\n\n    // Match if target is contained in firstArg or exact\n    if (firstArg.includes(target) || target.includes(firstArg)) {\n      return i;\n    }\n  }\n\n  return -1;\n}\n\nfunction findSectionEndIndex(lines, startIdx) {\n  for (let i = startIdx + 1; i < lines.length; i++) {\n    const t = lines[i].trim();\n    if (\n      t.startsWith(\"\\\\headingBf\") ||\n      t.startsWith(\"\\\\section\") ||\n      t.startsWith(\"\\\\end{document}\")\n    ) {\n      return i;\n    }\n  }\n  return lines.length;\n}\n\n// Get all active (non-commented) \\item lines in a range\nfunction getActiveBullets(lines, startIdx, endIdx) {\n  const bullets = [];\n  for (let i = startIdx; i < endIdx; i++) {\n    const t = lines[i].trim();\n    if (!t.startsWith(\"%\") && /^\\\\item\\s+/.test(t)) {\n      bullets.push({ lineIdx: i, text: lines[i] });\n    }\n  }\n  return bullets;\n}\n\n// Find the \\end{resume_list} line within a section to insert before it\nfunction findInsertLine(lines, startIdx, endIdx) {\n  for (let i = endIdx - 1; i > startIdx; i--) {\n    if (lines[i].trim().startsWith(\"\\\\end{resume_list}\")) return i;\n  }\n  // Fallback: insert before section end\n  return endIdx;\n}\n\n// ─────────────────────────────────────────\n// 4. Apply edits\n// ─────────────────────────────────────────\nlet updatedResume = originalResume;\nconst changeLog = [];\n\n// PASS 1: Comment out old bullets\nfor (const sectionEdit of edits.sections) {\n  const { section, comment_out } = sectionEdit;\n  const targetText = comment_out[0].old_text;\n  const reason = comment_out[0].reason;\n\n  const lines = updatedResume.split(\"\\n\");\n  const startIdx = findSectionLineIndex(lines, section);\n\n  if (startIdx === -1) {\n    changeLog.push({ action: \"comment_out\", changed: false, section, reason: `Section \"${section}\" not found in LaTeX` });\n    continue;\n  }\n\n  const endIdx = findSectionEndIndex(lines, startIdx);\n  const bullets = getActiveBullets(lines, startIdx, endIdx);\n\n  if (!bullets.length) {\n    changeLog.push({ action: \"comment_out\", changed: false, section, reason: \"No active bullets found in section\" });\n    continue;\n  }\n\n  // Try exact substring match first, then fall back to best overlap score\n  let best = null;\n  let bestScore = 0;\n\n  for (const bullet of bullets) {\n    const stripped = stripLatex(bullet.text);\n    const strippedTarget = stripLatex(targetText);\n\n    // Exact or near-exact substring match\n    if (stripped.includes(strippedTarget) || strippedTarget.includes(stripped)) {\n      best = bullet;\n      bestScore = 1;\n      break;\n    }\n\n    // Word overlap fallback — lowered threshold to 0.3\n    const score = wordOverlapScore(bullet.text, targetText);\n    if (score > bestScore) {\n      best = bullet;\n      bestScore = score;\n    }\n  }\n\n  // FIX: Lowered threshold from 0.45 → 0.3 to catch partial matches\n  if (!best || bestScore < 0.3) {\n    // Last resort: pick the SHORTEST bullet (usually the weakest/most generic)\n    best = bullets.reduce((a, b) =>\n      stripLatex(a.text).length <= stripLatex(b.text).length ? a : b\n    );\n    changeLog.push({\n      action: \"comment_out\",\n      changed: true,\n      section,\n      matched_line: best.text.trim(),\n      reason: reason + \" (fallback: shortest bullet)\",\n      score: bestScore\n    });\n  } else {\n    changeLog.push({\n      action: \"comment_out\",\n      changed: true,\n      section,\n      matched_line: best.text.trim(),\n      reason,\n      score: bestScore\n    });\n  }\n\n  // Replace the matched line with commented-out version\n  const newLines = updatedResume.split(\"\\n\");\n  newLines[best.lineIdx] =\n    `% REMOVED (${escapeLatexText(reason)})\\n% ${best.text.trim()}`;\n  updatedResume = newLines.join(\"\\n\");\n}\n\n// PASS 2: Insert new bullets\nfor (const sectionEdit of edits.sections) {\n  const { section, add_points } = sectionEdit;\n  const newText = add_points[0];\n\n  const lines = updatedResume.split(\"\\n\");\n  const startIdx = findSectionLineIndex(lines, section);\n\n  if (startIdx === -1) {\n    changeLog.push({ action: \"add_point\", changed: false, section, reason: `Section \"${section}\" not found` });\n    continue;\n  }\n\n  const endIdx = findSectionEndIndex(lines, startIdx);\n  const insertAt = findInsertLine(lines, startIdx, endIdx);\n\n  const newBullet = \"\\\\item \" + ensurePeriod(escapeLatexText(newText));\n  lines.splice(insertAt, 0, newBullet);\n  updatedResume = lines.join(\"\\n\");\n\n  changeLog.push({ action: \"add_point\", changed: true, section, new_text: newText });\n}\n\n// ─────────────────────────────────────────\n// 5. Bold keywords on newly added bullets only\n// ─────────────────────────────────────────\nconst fallbackKeywords = [\n  \"TypeScript\", \"JavaScript\", \"RESTful APIs\", \"REST APIs\", \"Node.js\", \"Express.js\",\n  \"Spring Boot\", \"React\", \"Redux\", \"Next.js\", \"Vue.js\", \"Java\", \"Python\", \"Django\",\n  \"PostgreSQL\", \"MongoDB\", \"DynamoDB\", \"SQL\", \"AWS\", \"Azure\", \"GCP\", \"Docker\",\n  \"Kubernetes\", \"Terraform\", \"CI/CD\", \"Jenkins\", \"GitLab\", \"microservices\",\n  \"cloud-native\", \"full-stack\", \"backend\", \"frontend\", \"DevOps\", \"testing\",\n  \"deployment\", \"data pipeline\", \"dashboards\", \"PowerBI\"\n];\n\nconst boldKeywords = [\n  ...new Set([\n    ...(Array.isArray(edits.bold_keywords) ? edits.bold_keywords : []),\n    ...fallbackKeywords\n  ])\n]\n  .map((k) => String(k || \"\").trim())\n  .filter(Boolean)\n  .sort((a, b) => b.length - a.length); // longest first to avoid partial replacement\n\nconst addedTexts = new Set(\n  changeLog\n    .filter((e) => e.action === \"add_point\" && e.changed)\n    .map((e) => stripLatex(e.new_text))\n);\n\nfunction applyBolding(line) {\n  if (!line.trim().startsWith(\"\\\\item\")) return line;\n\n  // Only bold newly added lines\n  if (!addedTexts.has(stripLatex(line.replace(/^\\\\item\\s*/i, \"\").replace(/\\.$/, \"\")))) {\n    return line;\n  }\n\n  let result = line;\n  for (const kw of boldKeywords) {\n    if (!kw) continue;\n    const regex = new RegExp(\n      `(?<![A-Za-z0-9\\\\\\\\])(${escapeRegex(kw)})(?![A-Za-z0-9])`,\n      \"gi\"\n    );\n    result = result.replace(regex, (match) => {\n      // Don't double-bold\n      return result.includes(`\\\\textbf{${match}}`) ? match : `\\\\textbf{${match}}`;\n    });\n  }\n\n  // Clean up any accidental double-bolding\n  result = result\n    .replace(/\\\\textbf\\{\\\\textbf\\{([^{}]*)\\}\\}/g, \"\\\\textbf{$1}\")\n    .replace(/\\\\textbf\\{([\\w.-]+)\\s+\\\\textbf\\{([\\w.-]+)\\}\\}/g, \"\\\\textbf{$1 $2}\");\n\n  return result;\n}\n\nupdatedResume = updatedResume.split(\"\\n\").map(applyBolding).join(\"\\n\");\n\n// ─────────────────────────────────────────\n// 6. LaTeX safety cleanup\n// ─────────────────────────────────────────\nupdatedResume = updatedResume\n  .replace(/\\\\textbf\\{\\\\textbf\\{([^{}]*)\\}\\}/g, \"\\\\textbf{$1}\")\n  .replace(/\\\\textbf\\{RESTful \\\\textbf\\{APIs\\}\\}/g, \"\\\\textbf{RESTful APIs}\")\n  .replace(/\\\\textbf\\{REST \\\\textbf\\{APIs\\}\\}/g, \"\\\\textbf{REST APIs}\")\n  .replace(/\\\\textbf\\{cloud-\\\\textbf\\{native\\}\\}/g, \"\\\\textbf{cloud-native}\")\n  .replace(/\\\\textbf\\{full-\\\\textbf\\{stack\\}\\}/g, \"\\\\textbf{full-stack}\")\n  .replace(/(-?\\d+)px/g, \"$1pt\");\n\n// ─────────────────────────────────────────\n// 7. Output\n// ─────────────────────────────────────────\nconst companyRaw = formData.company_name || rawJson.company_name || \"company\";\nconst roleRaw = formData.role_title || rawJson.role_title || \"role\";\nconst baseName = `resume_${slugify(companyRaw) || \"company\"}_${slugify(roleRaw) || \"role\"}`;\nconst workDir = `/home/node/.n8n-files/${baseName}`;\n\nconst successfulEdits = changeLog.filter((e) => e.changed);\nconst failedEdits = changeLog.filter((e) => !e.changed);\n\nreturn [\n  {\n    json: {\n      updated_resume_latex: updatedResume,\n      resume_base64: Buffer.from(updatedResume, \"utf8\").toString(\"base64\"),\n\n      change_log: changeLog,\n      change_log_base64: Buffer.from(\n        JSON.stringify({\n          summary: edits.summary || \"\",\n          sections_processed: edits.sections.length,\n          successful_edits: successfulEdits.length,\n          failed_edits: failedEdits.length,\n          edits,\n          changeLog,\n          bold_keywords_used: boldKeywords\n        }, null, 2),\n        \"utf8\"\n      ).toString(\"base64\"),\n\n      // Useful for debugging\n      sections_found: edits.sections.map((s) => s.section),\n      successful_edits: successfulEdits.length,\n      failed_edits: failedEdits.length,\n      failed_details: failedEdits,\n\n      relevant_summary: edits.summary || \"\",\n      bold_keywords: boldKeywords,\n\n      work_dir: workDir,\n      tex_path: `${workDir}/${baseName}.tex`,\n      pdf_path: `${workDir}/${baseName}.pdf`,\n      log_path: `${workDir}/${baseName}_changes.json`,\n      tex_file_name: `${baseName}.tex`,\n      pdf_file_name: `${baseName}.pdf`,\n      log_file_name: `${baseName}_changes.json`\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        656,
+        224
+      ],
+      "id": "4b5f4a04-372e-41d2-a324-95b2ea868623",
+      "name": "Merge Resume Suggestions"
+    },
+    {
+      "parameters": {
+        "fileSelector": "={{ $('Merge Resume Suggestions').first().json.pdf_path }}",
+        "options": {
+          "dataPropertyName": "data"
+        }
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        1104,
+        224
+      ],
+      "id": "794b6e7b-7b01-4e53-aa69-d9189cb3aae9",
+      "name": "Read/Write Files from Disk1"
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "respondWith": "returnBinary",
+        "completionTitle": "Resume letter generated",
+        "completionMessage": "Your tailored resume PDF is ready.",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        1328,
+        224
+      ],
+      "id": "938aceb1-02e7-4519-9a57-d386e66f9eaf",
+      "name": "Form1",
+      "webhookId": "84105ea7-0467-4af0-be15-98baf968e1a1"
+    },
+    {
+      "parameters": {
+        "formTitle": "Download Saved TEX File",
+        "formDescription": "Choose resume or cover letter and enter the company and role used when generating it.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "File Type",
+              "fieldType": "dropdown",
+              "fieldName": "file_type",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "resume"
+                  },
+                  {
+                    "option": "cover_letter"
+                  }
+                ]
+              },
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Company Name",
+              "fieldName": "company_name"
+            },
+            {
+              "fieldLabel": "Role Title",
+              "fieldName": "role_title",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.5,
+      "position": [
+        -16,
+        448
+      ],
+      "id": "db727c1b-9e30-4725-bfa4-ab13d3ef596e",
+      "name": "Download TEX",
+      "webhookId": "f483fb20-434f-408b-b389-969daf093a0c"
+    },
+    {
+      "parameters": {
+        "fileSelector": "={{ $('Clean TEX Path').first().json.tex_path }}",
+        "options": {
+          "dataPropertyName": "data"
+        }
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        448
+      ],
+      "id": "253be966-5225-4c50-810c-08b86df5d0e9",
+      "name": "Read/Write Files from Disk2"
+    },
+    {
+      "parameters": {
+        "jsCode": "const stdout = $input.first().json.stdout || \"\";\nconst stderr = $input.first().json.stderr || \"\";\n\nconst texPath = stdout.trim();\n\nif (!texPath || texPath.includes(\"ERROR\")) {\n  throw new Error(\"No TEX file found. stdout: \" + stdout + \" stderr: \" + stderr);\n}\n\nconst fileName = texPath.split(\"/\").pop();\n\nreturn [\n  {\n    json: {\n      tex_path: texPath,\n      tex_file_name: fileName\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        656,
+        448
+      ],
+      "id": "610f903d-6d5d-4f1a-9715-5004223dd5c1",
+      "name": "Clean TEX Path"
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "respondWith": "returnBinary",
+        "completionTitle": "TEX file ready",
+        "completionMessage": "Your editable LaTeX file is ready to download.",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        1104,
+        448
+      ],
+      "id": "b34b1b48-0d03-4639-8af8-7b03b82ff638",
+      "name": "Form2",
+      "webhookId": "84105ea7-0467-4af0-be15-98baf968e1a1"
+    },
+    {
+      "parameters": {
+        "command": "=base=\"{{ $('Build TEX Search Info').first().json.base_name }}\"\ntex_file=\"${base}.tex\"\n\nSEARCH_DIRS=\"/home/node/n8n-files /home/node/.n8n-files\"\n\nfound_file=\"\"\n\nfor dir in $SEARCH_DIRS; do\n  if [ -d \"$dir\" ]; then\n    file=$(find \"$dir\" -type f -name \"$tex_file\" | sort | tail -n 1)\n    if [ -n \"$file\" ]; then\n      found_file=\"$file\"\n    fi\n  fi\ndone\n\nif [ -z \"$found_file\" ]; then\n  echo \"ERROR: No TEX file found for ${base}\" >&2\n  echo \"Checked folders:\" >&2\n  echo \"/home/node/n8n-files\" >&2\n  echo \"/home/node/.n8n-files\" >&2\n  exit 1\nfi\n\necho \"$found_file\""
+      },
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        432,
+        448
+      ],
+      "id": "00d36b9c-4535-44cf-839c-36352b0b7fda",
+      "name": "Find TEX File1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nconst fileTypeRaw = input.file_type || \"\";\nconst companyRaw = input.company_name || \"\";\nconst roleRaw = input.role_title || \"\";\n\nif (!fileTypeRaw) {\n  throw new Error(\"File Type is required.\");\n}\n\nif (!companyRaw) {\n  throw new Error(\"Company Name is required.\");\n}\n\nif (!roleRaw) {\n  throw new Error(\"Role Title is required.\");\n}\n\nfunction slugify(value) {\n  return String(value || \"\")\n    .trim()\n    .toLowerCase()\n    .replace(/&/g, \"and\")\n    .replace(/[^a-z0-9]+/g, \"_\")\n    .replace(/^_+|_+$/g, \"\")\n    .slice(0, 70);\n}\n\nconst fileType = slugify(fileTypeRaw);\nconst company = slugify(companyRaw);\nconst role = slugify(roleRaw);\n\nlet prefix = \"\";\n\nif (fileType === \"resume\") {\n  prefix = \"resume\";\n} else if (fileType === \"cover_letter\") {\n  prefix = \"cover_letter\";\n} else {\n  throw new Error(\"Invalid file type. Use resume or cover_letter.\");\n}\n\nconst baseName = `${prefix}_${company}_${role}`;\nconst texFileName = `${baseName}.tex`;\n\nreturn [\n  {\n    json: {\n      file_type: fileType,\n      company_name: companyRaw,\n      role_title: roleRaw,\n      base_name: baseName,\n      tex_file_name: texFileName\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        448
+      ],
+      "id": "9b49400f-1149-4818-8f98-59e63a4880f1",
+      "name": "Build TEX Search Info"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Execute Command": {
+      "main": [
+        [
+          {
+            "node": "Read/Write Files from Disk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read/Write Files from Disk": {
+      "main": [
+        [
+          {
+            "node": "Form",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request1": {
+      "main": [
+        [
+          {
+            "node": "Merge Body Into LaTeX",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Body Into LaTeX": {
+      "main": [
+        [
+          {
+            "node": "Execute Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Ollama Request": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Form Trigger": {
+      "main": [
+        [
+          {
+            "node": "Build Ollama Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resume": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Merge Resume Suggestions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Resume Suggestions": {
+      "main": [
+        [
+          {
+            "node": "Execute Command1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Command1": {
+      "main": [
+        [
+          {
+            "node": "Read/Write Files from Disk1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read/Write Files from Disk1": {
+      "main": [
+        [
+          {
+            "node": "Form1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download TEX": {
+      "main": [
+        [
+          {
+            "node": "Build TEX Search Info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean TEX Path": {
+      "main": [
+        [
+          {
+            "node": "Read/Write Files from Disk2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read/Write Files from Disk2": {
+      "main": [
+        [
+          {
+            "node": "Form2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find TEX File1": {
+      "main": [
+        [
+          {
+            "node": "Clean TEX Path",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build TEX Search Info": {
+      "main": [
+        [
+          {
+            "node": "Find TEX File1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "a6ee12da-a9d2-4304-8d8b-5cbdea2d8ff2",
+  "meta": {
+    "instanceId": "b48bc6641c4812d64e7e9f618c37e96327366b972f210e4a7dfb706c0663b326"
+  },
+  "id": "9UEWCNwNvOHjC9n5",
+  "tags": []
+}
